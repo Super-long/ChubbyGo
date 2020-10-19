@@ -24,7 +24,7 @@ type Op struct {
 	Value    string
 	Op       string 	// 代表单个操作的字符串Get，Put，Append
 	// 这样做就使得一个客户端一次只能执行一个操作了
-	ClientID int64  	// 每个Client的ID
+	ClientID uint64  	// 每个Client的ID
 	Clientseq    int    // 这个ClientID上目前的操作数
 }
 
@@ -62,7 +62,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 	DPrintf("[%d]: leader %d receive rpc: Get(%q).\n", kv.me, kv.me, args.Key)
 
 	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[args.ClientID]; ok {
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
 			reply.Err = Duplicate
@@ -112,7 +112,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		args.Op, args.Key, args.Value, args.ClientID, args.SeqNo)
 
 	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[args.ClientID]; ok {
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
 			reply.Err = Duplicate
@@ -168,17 +168,17 @@ func (kv *RaftKV) applyDaemon() {
 					cmd := msg.Command.(Op)
 					kv.mu.Lock()
 					//	显然在是一个新用户或者新操作seq大于ClientSeqCache中的值时才执行
-					if dup, ok := kv.ClientSeqCache[cmd.ClientID]; !ok || dup.Seq < cmd.Clientseq {
+					if dup, ok := kv.ClientSeqCache[int64(cmd.ClientID)]; !ok || dup.Seq < cmd.Clientseq {
 						switch cmd.Op {
 						case "Get":
-							kv.ClientSeqCache[cmd.ClientID] = &LatestReply{Seq: cmd.Clientseq,
+							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,
 								Value:kv.KvDictionary[cmd.Key],}
 						case "Put":
 							kv.KvDictionary[cmd.Key] = cmd.Value
-							kv.ClientSeqCache[cmd.ClientID] = &LatestReply{Seq: cmd.Clientseq,}
+							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
 						case "Append":
 							kv.KvDictionary[cmd.Key] += cmd.Value
-							kv.ClientSeqCache[cmd.ClientID] = &LatestReply{Seq: cmd.Clientseq,}
+							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
 						default:
 							DPrintf("[%d]: server %d receive invalid cmd: %v\n", kv.me, kv.me, cmd)
 							panic("invalid command operation")

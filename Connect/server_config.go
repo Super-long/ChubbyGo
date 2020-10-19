@@ -4,7 +4,6 @@ import (
 	"HummingbirdDS/KvServer"
 	"HummingbirdDS/Persister"
 	"HummingbirdDS/Raft"
-	"github.com/sony/sonyflake"
 	"log"
 	"net"
 	"net/http"
@@ -19,30 +18,20 @@ var MAXRERRIES = 10 // 在RPC连接是允许最大的重新连接数
 // 第一版的创建连接还是需要服务器之间都确定对方的IP，客户端也需要知道服务器的地址
 // TODO 后面可以改成类似redis，通过消息的交互得到其他节点的存在
 
-// 通过雪花算法生成一个全局唯一的ID
-func genSonyflake() uint64 {
-	flake := sonyflake.NewSonyflake(sonyflake.Settings{})
-	id, err := flake.NextID()
-	if err != nil {
-		log.Fatalf("flake.NextID() failed with %s\n", err)
-	}
-	return id
-}
-
-type Config struct {
-	peers     	[]*rpc.Client        	// 表示其他几个服务器的连接句柄
-	me        	int                  	// 后面改成全局唯一ID
-	nservers  	int                  	// 表示一共有多少个服务器
-	kvserver  	*KvServer.RaftKV     	// 一个raftkv实体
+type ServerConfig struct {
+	peers     	[]*rpc.Client			// 表示其他几个服务器的连接句柄
+	me        	int						// 后面改成全局唯一ID
+	nservers  	int						// 表示一共有多少个服务器
+	kvserver  	*KvServer.RaftKV		// 一个raftkv实体
 	persister 	*Persister.Persister 	// 持久化实体
-	maxreries 	int 				 	// 超时重连最大数
+	maxreries 	int 					// 超时重连最大数
 	mu 			sync.Mutex				// 用于保护本结构体的变量
 }
 
 /*
  * @brief: 读取配置文件，拿到其他服务器的地址，分别建立RPC连接
  */
-func (cfg *Config) connectAll() bool {
+func (cfg *ServerConfig) connectAll() bool {
 	var peers_ip []string
 	// TODO 应该读取配置文件
 	peers_ip = append(peers_ip, "localhost:8900", "localhost:8901")
@@ -118,7 +107,7 @@ func (cfg *Config) connectAll() bool {
 	}
 }
 
-func (cfg *Config) serverRegisterFun() {
+func (cfg *ServerConfig) serverRegisterFun() {
 	// TODO 用反射改成一个可复用的代码，代码长度可以减半
 	// 把RaftKv挂到RPC上
 	kvserver := new(KvServer.RaftKV)
@@ -161,19 +150,25 @@ func (cfg *Config) serverRegisterFun() {
 
 /*
  * @brief: 再调用这个函数的时候开始服务,
+ * @return: 连接可能因为网络原因出错，所以返回可能是false
  */
-func (cfg *Config) StartServer() {
+func (cfg *ServerConfig) StartServer() bool {
 	cfg.serverRegisterFun()
-	cfg.connectAll()
+	if ok := cfg.connectAll(); !ok{
+		log.Print("connect failture!\n")
+		return false
+	}
 	// 这里初始化的原因是connectAll以后才与其他服务器连接成功;kvserver服务已经开始
 	cfg.kvserver = KvServer.StartKVServer(cfg.peers, cfg.me, cfg.persister, 0)
+	return true
 }
 
 /*
  * @brief: 返回一个Config结构体，用于开始一个服务
+ * @param: nservers这个集群需要的机器数，包括本身，而且每个服务器初始化的时候必须配置正确
  */
-func StartConnect(nservers int) *Config {
-	cfg := &Config{}
+func CreatServer(nservers int) *ServerConfig {
+	cfg := &ServerConfig{}
 
 	cfg.nservers = nservers
 	cfg.peers = make([]*rpc.Client, cfg.nservers-1) // 存储了自己以外的其他服务器

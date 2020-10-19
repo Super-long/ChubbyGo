@@ -1,6 +1,7 @@
 package KvServer
 
 import (
+	"github.com/sony/sonyflake"
 	"log"
 	"math/big"
 "crypto/rand"
@@ -17,26 +18,25 @@ type Clerk struct {
 	leader 		int   // 记录哪一个是leader
 	// 为了保证操作的一致性
 	seq    		int   // 当前的操作数
-	ClientID    int64 // 记录当前客户端的序号
+	ClientID    uint64 // 记录当前客户端的序号
 }
+
+// 通过雪花算法生成一个全局唯一的ID
+func genSonyflake() uint64 {
+	flake := sonyflake.NewSonyflake(sonyflake.Settings{})
+	id, err := flake.NextID()
+	if err != nil {
+		log.Fatalf("flake.NextID() failed with %s\n", err)
+	}
+	return id
+}
+
 
 func nrand() int64 {
 	max := big.NewInt(int64(1) << 62)
 	bigx, _ := rand.Int(rand.Reader, max)
 	x := bigx.Int64()
 	return x
-}
-
-// 放到真正的分布式环境中的话应该使用一个可以获取全局唯一ID的一个方法
-func Deduplication() int64 {
-	for {
-		x := nrand()
-		if clients[x] {
-			continue
-		}
-		clients[x] = true
-		return x
-	}
 }
 
 // 在创建的时候已经知道了如何于服务端交互
@@ -46,7 +46,7 @@ func MakeClerk(servers []*rpc.Client) *Clerk {
 
 	ck.leader = mrand.Intn(len(servers))	// 随机选择一个起始值 生成(0,len(server)-1)的随机数
 	ck.seq = 1
-	ck.ClientID = Deduplication()
+	ck.ClientID = genSonyflake()
 
 	DPrintf("Clerk: %d\n", ck.ClientID)
 
