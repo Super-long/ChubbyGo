@@ -28,17 +28,19 @@ type ServerConfig struct {
 	Maxreries      int      `json:"maxreries"` 			// 超时重连最大数
 	ServersAddress []string `json:"servers_address"`   	// 读取配置文件中的其他服务器地址
 	MyPort         string   `json:"myport"`    			// 自己的端口号
+	TimeOutEntry   int		`json:"timeout_entry"`		// connectAll中定义的重传超时间隔 单位为毫秒
 }
 
 /*
  * @brief: 拿到其他服务器的地址，分别建立RPC连接
+ * @return:三种返回类型：超时;HttpError;成功
  */
-func (cfg *ServerConfig) connectAll() bool {
+func (cfg *ServerConfig) connectAll() error {
 	sem := make(semaphore, cfg.nservers-1)
 	sem_number := 0
 	var HTTPError int32 = 0
 	var TimeOut []int
-	var TimeOutMutex sync.Mutex
+	var timeout_mutex sync.Mutex
 
 	servers_length := len(cfg.ServersAddress)
 	for i := 0; i < servers_length; i++ {
@@ -60,7 +62,7 @@ func (cfg *ServerConfig) connectAll() bool {
 				go func(index int) {
 					defer sem.P(1)
 					number := 0
-					Timeout := 200	// TODO 可以搞成读配置文件
+					Timeout := cfg.TimeOutEntry
 					for number < cfg.Maxreries {
 						if atomic.LoadInt32(&HTTPError) > 0 {
 							return
@@ -89,8 +91,8 @@ func (cfg *ServerConfig) connectAll() bool {
 					}
 					// 只有循环cfg.maxreries遍没有结果以后才会跑到这里
 					// 也就是连接超时
-					TimeOutMutex.Lock()
-					defer TimeOutMutex.Unlock()
+					timeout_mutex.Lock()
+					defer timeout_mutex.Unlock()
 					TimeOut = append(TimeOut, index) // 为了方便打日志
 					return
 				}(i)
@@ -112,11 +114,11 @@ func (cfg *ServerConfig) connectAll() bool {
 			cfg.peers[i].Close() // 就算连接已经根本没建立进行close也只会返回ErrShutdown
 		}
 		if TimeOutLength > 0 {
-			log.Println(TimeOut, ": Connect Timeout!")
+			return ErrorInConnectAll(time_out)
 		}
-		return false
+		return ErrorInConnectAll(http_error)
 	} else {
-		return true
+		return nil	// 没有发生任何错误 成功
 	}
 }
 
@@ -153,21 +155,21 @@ func (cfg *ServerConfig) serverRegisterFun() {
 
 /*
  * @brief: 再调用这个函数的时候开始服务,
- * @return: 连接可能因为网络原因出错，所以返回可能是false
+ * @return: 三种返回类型：路径解析错误;connectAll连接出现问题;成功
  */
-func (cfg *ServerConfig) StartServer() bool {
+func (cfg *ServerConfig) StartServer() error {
 	if len(ServerListeners) == 1 {
 		// 正确读取配置文件 TODO 记得后面路径改一手
 		ServerListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/server_config.json", cfg)
 	} else {
 		log.Println("ServerListeners Error!")
-		return false
+		return ErrorInStartClient(parser_error)
 	}
 
 	cfg.serverRegisterFun()
-	if ok := cfg.connectAll(); !ok {
-		log.Print("connect failture!\n")
-		return false
+	if err := cfg.connectAll(); err != nil {
+		log.Println(err.Error())
+		return ErrorInStartClient(connect_error)
 	}
 	log.Println("myport 连接成功 : " , cfg.MyPort)
 
@@ -175,7 +177,7 @@ func (cfg *ServerConfig) StartServer() bool {
 
 	// 这里初始化的原因是connectAll以后才与其他服务器连接成功;kvserver服务已经开始
 	cfg.kvserver = KvServer.StartKVServer(cfg.peers, cfg.me, cfg.persister, 0)
-	return true
+	return nil
 }
 
 /*
