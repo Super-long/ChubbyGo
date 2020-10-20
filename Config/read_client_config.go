@@ -8,6 +8,10 @@ import (
 	"sync"
 )
 
+func init(){
+	Connect.RegisterRestClientListener(LoadClientConfig)
+}
+
 var Client_file_locker sync.Mutex //config file locker
 
 func LoadClientConfig(filename string, cfg *Connect.ClientConfig) bool {

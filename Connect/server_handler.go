@@ -1,11 +1,10 @@
 package Connect
 
 import (
-	"HummingbirdDS/Config"
+	"HummingbirdDS/Flake"
 	"HummingbirdDS/KvServer"
 	"HummingbirdDS/Persister"
 	"HummingbirdDS/Raft"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -26,13 +25,13 @@ type ServerConfig struct {
 	persister *Persister.Persister // 持久化实体
 	mu        sync.Mutex           // 用于保护本结构体的变量
 	// 不设置成大写没办法从配置文件中读出来
-	Maxreries      int      `json:maxreries` 	// 超时重连最大数
-	ServersAddress []string `json:address`   	// 读取配置文件中的其他服务器地址
-	MyPort string			`json:myport` 		// 自己的端口号
+	Maxreries      int      `json:"maxreries"` 			// 超时重连最大数
+	ServersAddress []string `json:"servers_address"`   	// 读取配置文件中的其他服务器地址
+	MyPort         string   `json:"myport"`    			// 自己的端口号
 }
 
 /*
- * @brief: 读取配置文件，拿到其他服务器的地址，分别建立RPC连接
+ * @brief: 拿到其他服务器的地址，分别建立RPC连接
  */
 func (cfg *ServerConfig) connectAll() bool {
 	sem := make(semaphore, cfg.nservers-1)
@@ -41,7 +40,8 @@ func (cfg *ServerConfig) connectAll() bool {
 	var TimeOut []int
 	var TimeOutMutex sync.Mutex
 
-	for i := 0; i < cfg.nservers-1; i++ {
+	servers_length := len(cfg.ServersAddress)
+	for i := 0; i < servers_length; i++ {
 		if atomic.LoadInt32(&HTTPError) > 0 {
 			break
 		}
@@ -59,34 +59,35 @@ func (cfg *ServerConfig) connectAll() bool {
 				// 网络出现问题我们有理由报错重试，次数上限为MAXRERRIES，每次间隔时间翻倍
 				go func(index int) {
 					defer sem.P(1)
-					number := 0 // 后面可以搞成读取配置文件
-					Timeout := 200
+					number := 0
+					Timeout := 200	// TODO 可以搞成读配置文件
 					for number < cfg.Maxreries {
 						if atomic.LoadInt32(&HTTPError) > 0 {
 							return
 						}
-						log.Printf("%s : Reconnecting for the %d time\n", cfg.ServersAddress[i], number+1)
+						log.Printf("%s : Reconnecting for the %d time\n", cfg.ServersAddress[index], number+1)
 						number++
 						Timeout = Timeout * 2
 						time.Sleep(time.Duration(Timeout) * time.Millisecond) // 倍增重连时长
-						TempClient, err := rpc.DialHTTP("tcp", cfg.ServersAddress[i])
+						TempClient, err := rpc.DialHTTP("tcp", cfg.ServersAddress[index])
 						if err != nil {
 							switch err.(type) {
 							case *net.OpError:
 								// 继续循环就ok
+								continue
 							default:
-								// log.Fatal(temp.Error())
 								atomic.AddInt32(&HTTPError, 1)
 								return
 							}
 						} else {
 							// cfg.mu.Lock()
 							// defer cfg.mu.Unlock()	// 没有协程会碰这个
-							cfg.peers[i] = TempClient
+							log.Printf("%d : 与%d 连接成功\n", cfg.me,cfg.ServersAddress[index])
+							cfg.peers[index] = TempClient
 							return
 						}
 					}
-					// 只有循环cfg.maxreries边没有结果以后才会跑到这里
+					// 只有循环cfg.maxreries遍没有结果以后才会跑到这里
 					// 也就是连接超时
 					TimeOutMutex.Lock()
 					defer TimeOutMutex.Unlock()
@@ -95,10 +96,10 @@ func (cfg *ServerConfig) connectAll() bool {
 				}(i)
 				continue
 			default:
-				//log.Fatal(temp.Error())
 				atomic.AddInt32(&HTTPError, 1)
 			}
 		} else {
+			log.Printf("%d : 与%d 连接成功\n", cfg.me,cfg.ServersAddress[i])
 			cfg.peers[i] = client
 		}
 	}
@@ -107,7 +108,7 @@ func (cfg *ServerConfig) connectAll() bool {
 
 	TimeOutLength := len(TimeOut)
 	if atomic.LoadInt32(&HTTPError) > 0 || TimeOutLength > 0 { // 失败以后释放连接
-		for i := 0; i < cfg.nservers-1; i++ {
+		for i := 0; i < servers_length; i++ {
 			cfg.peers[i].Close() // 就算连接已经根本没建立进行close也只会返回ErrShutdown
 		}
 		if TimeOutLength > 0 {
@@ -125,38 +126,28 @@ func (cfg *ServerConfig) serverRegisterFun() {
 	kvserver := new(KvServer.RaftKV)
 	err := rpc.Register(kvserver)
 	if err != nil {
-		panic(err.Error())
+		// RPC会把全部函数中满足规则的函数注册，如果存在不满足规则的函数则会返回err
+		log.Println(err.Error())
 	}
-	// 通过函数把mathutil中提供的服务注册到http协议上，方便调用者可以利用http的方式进行数据传输
-	rpc.HandleHTTP()
-
-	// 在特定的端口进行监听 默认采用tcp 不支持配置网络协议
-	listen1, err1 := net.Listen("tcp", cfg.MyPort)
-	if err1 != nil {
-		panic(err.Error())
-	}
-	go func() {
-		// 调用方法去处理http请求
-		http.Serve(listen1, nil)
-	}()
 
 	// 把Raft挂到RPC上
 	raft := new(Raft.Raft)
-	err = rpc.Register(raft)
-	if err != nil {
-		panic(err.Error())
+	err1 := rpc.Register(raft)
+	if err1 != nil {
+		log.Println(err1.Error())
 	}
+
 	// 通过函数把mathutil中提供的服务注册到http协议上，方便调用者可以利用http的方式进行数据传输
 	rpc.HandleHTTP()
 
 	// 在特定的端口进行监听
-	listen2, err2 := net.Listen("tcp", cfg.MyPort)
+	listen, err2 := net.Listen("tcp", cfg.MyPort)
 	if err2 != nil {
-		panic(err.Error())
+		log.Println(err2.Error())
 	}
 	go func() {
 		// 调用方法去处理http请求
-		http.Serve(listen2, nil)
+		http.Serve(listen, nil)
 	}()
 }
 
@@ -165,15 +156,23 @@ func (cfg *ServerConfig) serverRegisterFun() {
  * @return: 连接可能因为网络原因出错，所以返回可能是false
  */
 func (cfg *ServerConfig) StartServer() bool {
-	Config.LoadServerConfig("server_config.json", cfg)
-
-	fmt.Println("读取的address的长度为： ", len(cfg.ServersAddress))
+	if len(ServerListeners) == 1 {
+		// 正确读取配置文件 TODO 记得后面路径改一手
+		ServerListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/server_config.json", cfg)
+	} else {
+		log.Println("ServerListeners Error!")
+		return false
+	}
 
 	cfg.serverRegisterFun()
 	if ok := cfg.connectAll(); !ok {
 		log.Print("connect failture!\n")
 		return false
 	}
+	log.Println("myport 连接成功 : " , cfg.MyPort)
+
+	time.Sleep(5 * time.Second)
+
 	// 这里初始化的原因是connectAll以后才与其他服务器连接成功;kvserver服务已经开始
 	cfg.kvserver = KvServer.StartKVServer(cfg.peers, cfg.me, cfg.persister, 0)
 	return true
@@ -188,7 +187,7 @@ func CreatServer(nservers int) *ServerConfig {
 
 	cfg.nservers = nservers
 	cfg.peers = make([]*rpc.Client, cfg.nservers-1) // 存储了自己以外的其他服务器的RPC封装
-	cfg.me = GenSonyflake()                         // 全局ID需要传给raft层
+	cfg.me = Flake.GenSonyflake()                   // 全局ID需要传给raft层
 	cfg.persister = Persister.MakePersister()
 
 	return cfg
@@ -198,4 +197,12 @@ func CreatServer(nservers int) *ServerConfig {
 // 使用Listener模式避免/Connect和/Config的环状引用
 // 当然可能好的设计可以避免这样的问题，比如把读配置文件中的函数参数改成接口，用反射去推
 
+type ServerListener func(filename string, cfg *ServerConfig) bool
 
+var ServerListeners []ServerListener
+
+func RegisterRestServerListener(l ServerListener) {
+	ServerListeners = append(ServerListeners, l)
+}
+
+// --------------------------

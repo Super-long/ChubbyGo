@@ -184,7 +184,7 @@ func (rf *Raft) fillRequestVoteArgs(args *RequestVoteArgs) {
  * 3.判断是否已经投过票
  * 4.比较最后一项日志的Term，也就是LastLogTerm，相同的话比较索引，也就是LastLogIndex，如果当前节点较新的话就不会投票，否则投票
  */
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -202,10 +202,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		if args.Term > rf.CurrentTerm {
 			rf.CurrentTerm = args.Term
 			rf.state = Follower
-			rf.VotedFor = -1
+			rf.VotedFor = 0
 		}
 
-		if rf.VotedFor == -1 {
+		if rf.VotedFor == 0 {
 			// 对比双方日志，只有这一种情况会投票：即未投票，且对方最新日志项Term高于自己的日志项时
 			if (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIdx) ||
 				args.LastLogTerm > lastLogTerm {	// 请求投票者日志新于自己
@@ -222,6 +222,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 	rf.persist()
+	return nil
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -255,14 +256,14 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) turnToFollow() {
 	rf.state = Follower
-	rf.VotedFor = -1
+	rf.VotedFor = 0
 }
 
 // AppendEntries定义了follower节点收到appendentries以后的处理逻辑
 /*
  * 其实一共四种情况，就是follower日志多于leader，follower日志少于leader，follower日志等于leader（最新index处Term是否相同）
  */
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) error {
 	DPrintf("[%d]: rpc AE, from peer: %d, term: %d\n", rf.me, args.LeaderID, args.Term)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -270,7 +271,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term < rf.CurrentTerm {
 		reply.CurrentTerm = rf.CurrentTerm
 		reply.Success = false
-		return
+		return nil
 	}
 	if rf.CurrentTerm < args.Term {
 		rf.CurrentTerm = args.Term
@@ -295,7 +296,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.CurrentTerm = rf.CurrentTerm
 		reply.ConflictTerm = rf.snapshotTerm
 		reply.FirstIndex = rf.snapshotIndex
-		return
+		return nil
 	}
 
 	// 去掉对于PrevLogIndex来说多余的日志，开始寻找最近的匹配点
@@ -362,6 +363,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 	}
 	rf.persist()
+	return nil
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -561,11 +563,11 @@ func (rf *Raft) updateCommitIndex() {
 	}
 }
 
-func (rf *Raft) Kill() {
+/*func (rf *Raft) Kill() {
 	close(rf.shutdownCh)
 	rf.commitCond.Broadcast()
 }
-
+*/
 
 /*
  * @brief: 用于把数据提交给rf.applyCh
@@ -710,7 +712,7 @@ func Make(peers []*rpc.Client, me uint64,
 	rf.applyCh = applyCh
 
 	rf.state = Follower
-	rf.VotedFor = -1
+	rf.VotedFor = 0
 	rf.Logs = make([]LogEntry, 1) // first index is 1
 	rf.Logs[0] = LogEntry{// placeholder
 		Term: 0,
@@ -779,12 +781,12 @@ type InstallSnapshotReply struct {
 	CurrentTerm int 	// leader可能已经落后了，用于更新leader
 }
 
-func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) error {
 	select {
 	case <-rf.shutdownCh:
 		DPrintf("[%d]: peer %d is shutting down, reject install snapshot rpc request.\n",
 			rf.me, rf.me)
-		return
+		return nil
 	default:
 	}
 
@@ -797,14 +799,14 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	if args.Term < rf.CurrentTerm {
 		DPrintf("[%d]: rpc snapshot, args.term < rf.CurrentTerm (%d < %d)\n", rf.me,
 			args.Term, rf.CurrentTerm)
-		return
+		return nil
 	}
 
 	// 快照可能也会重复
 	if args.LastIncludedIndex <= rf.snapshotIndex {
 		DPrintf("[%d]: rpc snapshot, args.LastIncludedIndex <= rf.snapshotIndex (%d < %d)\n", rf.me,
 			args.LastIncludedIndex, rf.snapshotIndex)
-		return
+		return nil
 	}
 
 	rf.resetTimer <- struct{}{}
@@ -824,7 +826,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.applyCh <- ApplyMsg{rf.snapshotIndex, nil, true, args.Snapshot}
 
 		rf.persist()
-		return
+		return nil
 	}
 
 	// 本地日志大于快照，只更新一部分
@@ -845,6 +847,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.applyCh <- ApplyMsg{rf.snapshotIndex, nil, true, args.Snapshot}
 
 	rf.persist()
+	return nil
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {

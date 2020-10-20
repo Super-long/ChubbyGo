@@ -2,6 +2,7 @@ package main
 
 import (
 	"HummingbirdDS/Connect"
+	_ "HummingbirdDS/Config"
 	"fmt"
 	"strconv"
 )

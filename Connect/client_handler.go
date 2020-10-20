@@ -2,7 +2,6 @@ package Connect
 
 import (
 	"HummingbirdDS/KvServer"
-	"HummingbirdDS/Config"
 	"log"
 	"net/rpc"
 	"sync/atomic"
@@ -15,7 +14,7 @@ type ClientConfig struct{
 	clk *KvServer.Clerk							// 一个客户端的实体
 	nservers int 								// 连接的服务器数
 	maxreries int								// 连接的重试最大数
-	ServersAddress []string	`json:address`		// 从配置文件中读取服务器的地址
+	ServersAddress []string	`json:"client_address"`		// 从配置文件中读取服务器的地址
 }
 
 func CreateClient() *ClientConfig{
@@ -26,9 +25,16 @@ func CreateClient() *ClientConfig{
 
 // 这里要使用与ServerConfig中connectAll相同代码的原因是考虑到可能后面要把client迁移出去，所以不必进行代码复用
 func (cfg *ClientConfig) connectAll() bool{
-	Config.LoadClientConfig("client_config.json", cfg)
+	if len(ClientListeners) == 1 {
+		// 正确读取配置文件
+		ClientListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/client_config.json", cfg)
+	} else {
+		log.Println("ClientListeners Error!")
+		// TODO 其实与返回值意义不符
+		return false
+	}
 
-	log.Println(cfg.ServersAddress[0], cfg.ServersAddress[1])
+	log.Printf("client length length %d\n", len(cfg.ServersAddress))
 
 	sem := make(semaphore, cfg.nservers-1)
 	sem_number := 0
@@ -121,3 +127,16 @@ func (cfg *ClientConfig) Append(key string, value string){
 func (cfg *ClientConfig) Get(key string) string{
 	return cfg.clk.Get(key)
 }
+
+// --------------------------
+// 使用Listener模式避免/Connect和/Config的环状引用
+
+type ClientListener func(filename string, cfg *ClientConfig) bool
+
+var ClientListeners []ClientListener
+
+func RegisterRestClientListener(l ClientListener) {
+	ClientListeners = append(ClientListeners, l)
+}
+
+// --------------------------

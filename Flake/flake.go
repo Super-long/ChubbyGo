@@ -1,4 +1,4 @@
-package Connect
+package Flake
 
 import (
 	"github.com/sony/sonyflake"

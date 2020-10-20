@@ -52,11 +52,11 @@ type RaftKV struct {
 
 }
 
-func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
+func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 	// 当前已经不是leader了，自然立马返回
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = NoLeader
-		return
+		return nil
 	}
 
 	DPrintf("[%d]: leader %d receive rpc: Get(%q).\n", kv.me, kv.me, args.Key)
@@ -67,7 +67,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 			kv.mu.Unlock()
 			reply.Err = Duplicate
 			reply.Value = dup.Value
-			return
+			return nil
 		}
 	}
 
@@ -87,7 +87,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 		// 可能在提交之前重选也可能提交之后重选，所以需要重新发送
 		if !isLeader || term != curTerm {
 			reply.Err = ReElection
-			return
+			return nil
 		}
 
 		kv.mu.Lock()
@@ -100,12 +100,13 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) {
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:
 	}
+	return nil
 }
 
-func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = NoLeader
-		return
+		return nil
 	}
 
 	DPrintf("[%d]: leader %d receive rpc: PutAppend(%q => (%q,%q), (%d-%d).\n", kv.me, kv.me,
@@ -116,7 +117,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
 			reply.Err = Duplicate
-			return
+			return nil
 		}
 	}
 
@@ -134,11 +135,12 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		curTerm, isLeader := kv.rf.GetState()
 		if !isLeader || term != curTerm {
 			reply.Err = ReElection
-			return
+			return nil
 		}
 	case <-kv.shutdownCh:
-		return
+		return nil
 	}
+	return nil
 }
 
 /*
@@ -254,11 +256,11 @@ func (kv *RaftKV) readSnapshot(data []byte) {
 	d.Decode(&kv.ClientSeqCache)
 }
 
-func (kv *RaftKV) Kill() {
+/*func (kv *RaftKV) Kill() {
 	close(kv.shutdownCh)
 	kv.rf.Kill()
 
-}
+}*/
 
 func StartKVServer(servers []*rpc.Client, me uint64, persister *Persister.Persister, maxraftstate int) *RaftKV {
 	gob.Register(Op{})
