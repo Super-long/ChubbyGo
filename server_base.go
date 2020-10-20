@@ -5,7 +5,7 @@ import "HummingbirdDS/Connect"
 func main(){
 	cfg := Connect.CreatServer(3)
 	cfg.StartServer()
-	for  {
+	for true {
 
 	}
 	return

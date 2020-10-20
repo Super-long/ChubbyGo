@@ -47,10 +47,10 @@ type Raft struct {
 	mu        sync.Mutex          	// Lock to protect shared access to this peer's state
 	peers     []*rpc.Client 	// RPC end points of all peers
 	persister *Persister.Persister         	// Object to hold this peer's persisted state
-	me        int                 	// 自己的序号
+	me        uint64                 	// 自己的序号
 
 	CurrentTerm int        			// 服务器最后一次知道的任期号（初始化为 0，持续递增）
-	VotedFor    int        			// 在当前获得选票的候选人的 Id
+	VotedFor    uint64        			// 在当前获得选票的候选人的 Id
 	Logs        []LogEntry 			// 日志条目集；每一个条目包含一个用户状态机执行的指令，和收到时的任期号
 
 	commitIndex int   				// 已知的最大的已经被提交的日志条目的索引值 和lastApplied用于提交日志
@@ -152,7 +152,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 type RequestVoteArgs struct {
 	Term         int // 候选人的任期号 2A
-	CandidateID  int // 请求选票的候选人ID 2A
+	CandidateID  uint64 // 请求选票的候选人ID 2A
 	LastLogIndex int // 候选人的最后日志条目的索引值 2A
 	LastLogTerm  int // 候选人的最后日志条目的任期号 2A
 }
@@ -237,7 +237,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // 同步日志，日志项为空时可当做心跳包
 type AppendEntriesArgs struct {
 	Term         int        // leader的任期号
-	LeaderID     int        // leaderID 便于进行重定向
+	LeaderID     uint64     // leaderID 便于进行重定向
 	PrevLogIndex int        // 新日志之前日志的索引值
 	PrevLogTerm  int        // 新日志之前日志的Term
 	Entries      []LogEntry // 存储的日志条目 为空时是心跳包
@@ -523,7 +523,7 @@ func (rf *Raft) heartbeatDaemon() {
 			return
 		default:
 			for i := 0; i < len(rf.peers); i++ {
-				if i != rf.me {
+				if uint64(i) != rf.me {
 					// 发送心跳包
 					go rf.consistencyCheck(i)
 				}
@@ -646,7 +646,7 @@ func (rf *Raft) canvassVotes() {
 		}
 	}
 	for i := 0; i < peers; i++ {
-		if i != rf.me {
+		if uint64(i) != rf.me {
 			go func(n int) {
 				var reply RequestVoteReply
 				if rf.sendRequestVote(n, &voteArgs, &reply) {
@@ -668,7 +668,7 @@ func (rf *Raft) resetOnElection() {
 	for i := 0; i < count; i++ {
 		rf.matchIndex[i] = 0
 		rf.nextIndex[i] = length	//
-		if i == rf.me {
+		if uint64(i) == rf.me {
 			rf.matchIndex[i] = length - 1
 		}
 	}
@@ -701,7 +701,7 @@ func (rf *Raft) electionDaemon() {
  * @brief: 用于创建一个raft实体
  */
 // TODO 这里传入的实体很有意思，这里就已经知道了如何与其他服务器通信和持久化的具体策略，并被传入一个chan
-func Make(peers []*rpc.Client, me int,
+func Make(peers []*rpc.Client, me uint64,
 	persister *Persister.Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
 	rf.peers = peers
@@ -769,7 +769,7 @@ func (rf *Raft) CreateSnapshots(index int) {
 
 type InstallSnapshotArgs struct {
 	Term              int 		// 领导人的任期号
-	LeaderID          int		// 领导人的ID，以便于跟随者重定向请求
+	LeaderID          uint64	// 领导人的ID，以便于跟随者重定向请求
 	LastIncludedIndex int		// 快照中包含的最后日志条目的索引值
 	LastIncludedTerm  int		// 快照中包含的最后日志条目的任期号
 	Snapshot          []byte	// 快照数据

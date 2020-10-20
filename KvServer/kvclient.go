@@ -1,13 +1,13 @@
 package KvServer
 
 import (
-	"github.com/sony/sonyflake"
 	"log"
 	"math/big"
 "crypto/rand"
 mrand "math/rand"
 	"net/rpc"
 	"time"
+	"HummingbirdDS/Connect"
 )
 
 var clients = make(map[int64]bool)
@@ -20,17 +20,6 @@ type Clerk struct {
 	seq    		int   // 当前的操作数
 	ClientID    uint64 // 记录当前客户端的序号
 }
-
-// 通过雪花算法生成一个全局唯一的ID
-func genSonyflake() uint64 {
-	flake := sonyflake.NewSonyflake(sonyflake.Settings{})
-	id, err := flake.NextID()
-	if err != nil {
-		log.Fatalf("flake.NextID() failed with %s\n", err)
-	}
-	return id
-}
-
 
 func nrand() int64 {
 	max := big.NewInt(int64(1) << 62)
@@ -46,7 +35,7 @@ func MakeClerk(servers []*rpc.Client) *Clerk {
 
 	ck.leader = mrand.Intn(len(servers))	// 随机选择一个起始值 生成(0,len(server)-1)的随机数
 	ck.seq = 1
-	ck.ClientID = genSonyflake()
+	ck.ClientID = Connect.GenSonyflake()
 
 	DPrintf("Clerk: %d\n", ck.ClientID)
 

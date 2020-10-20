@@ -2,6 +2,7 @@ package Connect
 
 import (
 	"HummingbirdDS/KvServer"
+	"HummingbirdDS/Config"
 	"log"
 	"net/rpc"
 	"sync/atomic"
@@ -10,10 +11,11 @@ import (
 )
 
 type ClientConfig struct{
-	servers []*rpc.Client			// 表示其他几个服务器的连接句柄
-	clk *KvServer.Clerk				// 一个客户端的实体
-	nservers int 					// 连接的服务器数
-	maxreries int					// 连接的重试最大数
+	servers []*rpc.Client						// 表示其他几个服务器的连接句柄
+	clk *KvServer.Clerk							// 一个客户端的实体
+	nservers int 								// 连接的服务器数
+	maxreries int								// 连接的重试最大数
+	ServersAddress []string	`json:address`		// 从配置文件中读取服务器的地址
 }
 
 func CreateClient() *ClientConfig{
@@ -24,9 +26,10 @@ func CreateClient() *ClientConfig{
 
 // 这里要使用与ServerConfig中connectAll相同代码的原因是考虑到可能后面要把client迁移出去，所以不必进行代码复用
 func (cfg *ClientConfig) connectAll() bool{
-	var servers_ip []string
-	// TODO 应该读取配置文件
-	servers_ip = append(servers_ip, "localhost:8900", "localhost:8901","localhost:8902")
+	Config.LoadClientConfig("client_config.json", cfg)
+
+	log.Println(cfg.ServersAddress[0], cfg.ServersAddress[1])
+
 	sem := make(semaphore, cfg.nservers-1)
 	sem_number := 0
 	var OpErrorNumber int32 = 0
@@ -34,7 +37,7 @@ func (cfg *ClientConfig) connectAll() bool{
 		if atomic.LoadInt32(&OpErrorNumber) > 0{
 			break
 		}
-		client, err := rpc.DialHTTP("tcp", servers_ip[i])
+		client, err := rpc.DialHTTP("tcp", cfg.ServersAddress[i])
 		/*
 		 * 这里返回值有三种情况:
 		 * net.Dial返回error			： 重连
@@ -58,11 +61,11 @@ func (cfg *ClientConfig) connectAll() bool{
 						if atomic.LoadInt32(&OpErrorNumber) > 0{
 							return
 						}
-						log.Printf("%s : Reconnecting for the %d time\n",servers_ip[i] ,number+1)
+						log.Printf("%s : Reconnecting for the %d time\n",cfg.ServersAddress[i] ,number+1)
 						number++
 						Timeout = Timeout * 2
 						time.Sleep(time.Duration(Timeout) * time.Millisecond)
-						TempClient, err := rpc.DialHTTP("tcp", servers_ip[i])
+						TempClient, err := rpc.DialHTTP("tcp", cfg.ServersAddress[i])
 						if err != nil {
 							switch err.(type) {
 							case *net.OpError:

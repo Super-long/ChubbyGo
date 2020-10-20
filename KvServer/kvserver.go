@@ -35,7 +35,7 @@ type LatestReply struct {
 
 type RaftKV struct {
 	mu      sync.Mutex
-	me      int
+	me      uint64
 	rf      *Raft.Raft
 	applyCh chan Raft.ApplyMsg
 
@@ -260,7 +260,7 @@ func (kv *RaftKV) Kill() {
 
 }
 
-func StartKVServer(servers []*rpc.Client, me int, persister *Persister.Persister, maxraftstate int) *RaftKV {
+func StartKVServer(servers []*rpc.Client, me uint64, persister *Persister.Persister, maxraftstate int) *RaftKV {
 	gob.Register(Op{})
 
 	kv := new(RaftKV)
