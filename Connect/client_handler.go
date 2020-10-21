@@ -14,8 +14,7 @@ type ClientConfig struct {
 	servers        []*rpc.Client   // 表示其他几个服务器的连接句柄
 	clk            *KvServer.Clerk // 一个客户端的实体
 	nservers       int             // 连接的服务器数
-	maxreries      int             // 连接的重试最大数
-	ServersAddress []string        	`json:"client_address"` // 从配置文件中读取服务器的地址
+	ServersAddress []string        	`json:"client_address"` 	// 从配置文件中读取服务器的地址
 	TimeOutEntry   int				`json:"timeout_entry"`		// connectAll中定义的重传超时间隔 单位为毫秒
 	Maxreries      int      		`json:"maxreries"` 			// 超时重连最大数
 }
@@ -29,7 +28,8 @@ func CreateClient() *ClientConfig {
 /*
  * @brief: 拿到其他服务器的地址，分别建立RPC连接
  * @return: 三种返回类型：超时;HttpError;成功
- * @notes: 这里要使用与ServerConfig中connectAll相同代码的原因是考虑到可能后面要把client迁移出去，所以不必进行代码复用
+ * @notes: 	客户端也采取重传是因为担心在服务部署的时候直接连接导致失败;
+			这里要使用与ServerConfig中connectAll相同代码的原因是考虑到可能后面要把client迁移出去，所以不必进行代码复用
  */
 func (cfg *ClientConfig) connectAll() error {
 
@@ -55,7 +55,7 @@ func (cfg *ClientConfig) connectAll() error {
 			switch err.(type) {
 			case *net.OpError: // 与库实现挂钩 不同步版本的标准库实现这里可能需要改动
 				sem_number++
-				// 网络出现问题我们有理由报错重试，次数上限为MAXRERRIES，每次间隔时间翻倍
+				// 1. 网络出现问题我们有理由报错重试，次数上限为MAXRERRIES，每次间隔时间翻倍
 				go func(index int) {
 					defer sem.P(1)
 					number := 0
@@ -123,10 +123,13 @@ func (cfg *ClientConfig) connectAll() error {
  * @brief: 再调用这个函数的时候开始服务,
  * @return: 三种返回类型：路径解析错误;connectAll连接出现问题;成功
  */
+// TODO 错误类型出现问题 需要修改 有四种错误  根据ClientListeners的返回值才能搞出解析问题 一种是不太可能出现的ClientListeners错误
 func (cfg *ClientConfig) StartClient() error {
 	if len(ClientListeners) == 1 {
 		// 正确读取配置文件
 		ClientListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/client_config.json", cfg)
+		cfg.nservers = len(cfg.ServersAddress)
+		cfg.servers = make([]*rpc.Client, cfg.nservers)
 	} else {
 		log.Println("ClientListeners Error!")
 		return ErrorInStartClient(parser_error)
