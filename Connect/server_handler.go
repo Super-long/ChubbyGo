@@ -34,7 +34,7 @@ type ServerConfig struct {
  * @brief: 拿到其他服务器的地址，分别建立RPC连接
  * @return:三种返回类型：超时;HttpError;成功
  */
-// TODO peers出现了条件竞争
+// peers出现了条件竞争；修复，把服务启动在连接完成以后
 func (cfg *ServerConfig) connectAll() error {
 	sem := make(semaphore, cfg.nservers-1)
 	sem_number := 0
@@ -123,9 +123,8 @@ func (cfg *ServerConfig) connectAll() error {
 }
 
 func (cfg *ServerConfig) serverRegisterFun() {
-	// TODO 用反射改成一个可复用的代码，代码长度可以减半
+
 	// 把RaftKv挂到RPC上
-	//kvserver := new(KvServer.RaftKV)
 	err := rpc.Register(cfg.kvserver)
 	if err != nil {
 		// RPC会把全部函数中满足规则的函数注册，如果存在不满足规则的函数则会返回err
@@ -133,7 +132,6 @@ func (cfg *ServerConfig) serverRegisterFun() {
 	}
 
 	// 把Raft挂到RPC上
-	// raft := new(Raft.Raft)
 	err1 := rpc.Register(cfg.kvserver.GetRaft())
 	if err1 != nil {
 		log.Println(err1.Error())
@@ -158,12 +156,18 @@ func (cfg *ServerConfig) serverRegisterFun() {
  * @return: 三种返回类型：路径解析错误;connectAll连接出现问题;成功
  */
 func (cfg *ServerConfig) StartServer() error {
+	var flag bool = false
 	if len(ServerListeners) == 1 {
 		// 正确读取配置文件 TODO 记得后面路径改一手
-		ServerListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/server_config.json", cfg)
+		flag = ServerListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/server_config.json", cfg)
+		if !flag {
+			log.Println("File parser Error!")
+			return ErrorInStartServer(parser_error)
+		}
 	} else {
 		log.Println("ServerListeners Error!")
-		return ErrorInStartClient(parser_error)
+		// 这种情况只有在调用服务没有启动read_server_config.go的init函数时会出现
+		return ErrorInStartServer(Listener_error)
 	}
 
 	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
@@ -173,10 +177,10 @@ func (cfg *ServerConfig) StartServer() error {
 	cfg.serverRegisterFun()
 	if err := cfg.connectAll(); err != nil {
 		log.Println(err.Error())
-		return ErrorInStartClient(connect_error)
+		return ErrorInStartServer(connect_error)
 	}
 	cfg.kvserver.StartKVServer(cfg.peers)	// 启动服务
-	log.Println("myport 连接成功 且服务以启动成功: " , cfg.MyPort)
+	log.Printf("%s : 连接成功 且服务以启动成功 \n" , cfg.MyPort)
 	return nil
 }
 

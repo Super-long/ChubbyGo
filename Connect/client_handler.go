@@ -31,6 +31,14 @@ func CreateClient() *ClientConfig {
  * @notes: 	客户端也采取重传是因为担心在服务部署的时候直接连接导致失败;
 			这里要使用与ServerConfig中connectAll相同代码的原因是考虑到可能后面要把client迁移出去，所以不必进行代码复用
  */
+
+// TODO 测试的时候发现一个问题，就是当三台服务器宕机一台的时候，客户端这么写就连接不上了，所以需要修改这里，使得多于N/2的时候可以连接成功，小于的时候服务已经下线，不必连接。
+// TODO 这个问题并不简单，因为如果在connectAll中没有连接，到了客户端代码中又要一直操作，这势必是要加锁的。我们可以引入一个标记map标记peers的哪一项可以使用，
+// TODO ConnectAll中在客户端服务已经启动以后还在与未连接的服务器尝试连接，连接成功以后就要修改map，使客户端代码可以连接这个新的服务器，
+// TODO 这个map是ClientConfig和Clerk共享的。
+// TODO 这样看来在客户端必须一直尝试重新连接服务器，而不是和服务器一样的倍增，因为失败以后客户端不会再重连了，这与预期不符
+// TODO 暂时不动这里，因为服务器没有宕机时连接是ok的，先把测试代码过了以后再优化这里，防止这里出错导致排错困难
+
 func (cfg *ClientConfig) connectAll() error {
 
 	sem := make(semaphore, cfg.nservers-1)
@@ -118,26 +126,30 @@ func (cfg *ClientConfig) connectAll() error {
 	}
 }
 
-
 /*
  * @brief: 再调用这个函数的时候开始服务,
  * @return: 三种返回类型：路径解析错误;connectAll连接出现问题;成功
  */
-// TODO 错误类型出现问题 需要修改 有四种错误  根据ClientListeners的返回值才能搞出解析问题 一种是不太可能出现的ClientListeners错误
 func (cfg *ClientConfig) StartClient() error {
+	var flag bool = false
 	if len(ClientListeners) == 1 {
 		// 正确读取配置文件
-		ClientListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/client_config.json", cfg)
+		flag =  ClientListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/client_config.json", cfg)
+		if !flag{
+			log.Println("File parser Error!")
+			return ErrorInStartServer(parser_error)
+		}
 		cfg.nservers = len(cfg.ServersAddress)
 		cfg.servers = make([]*rpc.Client, cfg.nservers)
 	} else {
 		log.Println("ClientListeners Error!")
-		return ErrorInStartClient(parser_error)
+		// 这种情况只有在调用服务没有启动read_client_config.go的init函数时会出现
+		return ErrorInStartServer(Listener_error)
 	}
 
 	if err := cfg.connectAll(); err != nil {
 		log.Println(err.Error())
-		return ErrorInStartClient(connect_error)
+		return ErrorInStartServer(connect_error)
 	}
 	cfg.clk = KvServer.MakeClerk(cfg.servers)
 	return nil

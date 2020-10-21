@@ -14,7 +14,7 @@ var Server_file_locker sync.Mutex //config file locker
 func init(){
 	Connect.RegisterRestServerListener(LoadServerConfig)
 }
-// TODO 客户端服务器的对端地址，MAXRERRIES
+
 func LoadServerConfig(filename string, cfg *Connect.ServerConfig) bool {
 	fmt.Println(filename)
 	Server_file_locker.Lock()

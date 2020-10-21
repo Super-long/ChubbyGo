@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 )
 
 func main(){
 	// 目前测试一个客户端
-	n := 10
+	n := 1
 	clientConfigs := make([]*Connect.ClientConfig,n)
 	for i := 0; i < n; i++ {
 		clientConfigs[i] = Connect.CreateClient()
@@ -35,5 +36,7 @@ func main(){
 			}
 		}(i)
 	}
+
+	time.Sleep(10 *time.Second)
 	fmt.Println("PASS!")
 }
