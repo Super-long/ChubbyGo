@@ -4,7 +4,6 @@ import (
 	"HummingbirdDS/Flake"
 	"HummingbirdDS/KvServer"
 	"HummingbirdDS/Persister"
-	"HummingbirdDS/Raft"
 	"log"
 	"net"
 	"net/http"
@@ -35,6 +34,7 @@ type ServerConfig struct {
  * @brief: 拿到其他服务器的地址，分别建立RPC连接
  * @return:三种返回类型：超时;HttpError;成功
  */
+// TODO peers出现了条件竞争
 func (cfg *ServerConfig) connectAll() error {
 	sem := make(semaphore, cfg.nservers-1)
 	sem_number := 0
@@ -125,16 +125,16 @@ func (cfg *ServerConfig) connectAll() error {
 func (cfg *ServerConfig) serverRegisterFun() {
 	// TODO 用反射改成一个可复用的代码，代码长度可以减半
 	// 把RaftKv挂到RPC上
-	kvserver := new(KvServer.RaftKV)
-	err := rpc.Register(kvserver)
+	//kvserver := new(KvServer.RaftKV)
+	err := rpc.Register(cfg.kvserver)
 	if err != nil {
 		// RPC会把全部函数中满足规则的函数注册，如果存在不满足规则的函数则会返回err
 		log.Println(err.Error())
 	}
 
 	// 把Raft挂到RPC上
-	raft := new(Raft.Raft)
-	err1 := rpc.Register(raft)
+	// raft := new(Raft.Raft)
+	err1 := rpc.Register(cfg.kvserver.GetRaft())
 	if err1 != nil {
 		log.Println(err1.Error())
 	}
@@ -166,17 +166,17 @@ func (cfg *ServerConfig) StartServer() error {
 		return ErrorInStartClient(parser_error)
 	}
 
+	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
+	cfg.kvserver = KvServer.StartKVServerInit(cfg.me, cfg.persister, 0)
+	cfg.kvserver.StartRaftServer()
+
 	cfg.serverRegisterFun()
 	if err := cfg.connectAll(); err != nil {
 		log.Println(err.Error())
 		return ErrorInStartClient(connect_error)
 	}
-	log.Println("myport 连接成功 : " , cfg.MyPort)
-
-	time.Sleep(5 * time.Second)
-
-	// 这里初始化的原因是connectAll以后才与其他服务器连接成功;kvserver服务已经开始
-	cfg.kvserver = KvServer.StartKVServer(cfg.peers, cfg.me, cfg.persister, 0)
+	cfg.kvserver.StartKVServer(cfg.peers)	// 启动服务
+	log.Println("myport 连接成功 且服务以启动成功: " , cfg.MyPort)
 	return nil
 }
 

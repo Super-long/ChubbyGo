@@ -6,6 +6,8 @@ const (
 	NoLeader   = "NoLeader"
 	Duplicate  = "Duplicate"
 	ReElection = "ReElection"
+
+	ConnectError = "ConnectError"	// 最特殊的一项 用于判断对端服务器是否连接成功 如果对端还未与全部服务器连接成功 则什么也不干
 )
 
 type Err string

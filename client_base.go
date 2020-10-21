@@ -15,6 +15,7 @@ func main(){
 		clientConfigs[i] = Connect.CreateClient()
 		clientConfigs[i].StartClient()
 	}
+	fmt.Println("nihao ")
 	for i := 0; i < n; i++{
 		go func(cliID int){
 			for j := 0; j < 10; j++ {

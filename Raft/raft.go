@@ -4,11 +4,13 @@ import (
 	"HummingbirdDS/Persister"
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"log"
 	"math/rand"
 	"net/rpc"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,6 +76,8 @@ type Raft struct {
 	applyCh    chan ApplyMsg // 交付数据
 
 	shutdownCh chan struct{}
+
+	ConnectIsok *int32	// 参考RaftKV中的解释
 }
 
 func max(a, b int) int {
@@ -160,6 +164,8 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	CurrentTerm int  // 当前任期号,便于返回后更新自己的任期号 2A
 	VoteGranted bool // 候选人赢得了此张选票时为真 2A
+
+	IsOk bool		 // 用于告诉请求方对端的服务器是否已经启动
 }
 
 func (rf *Raft) fillRequestVoteArgs(args *RequestVoteArgs) {
@@ -185,6 +191,13 @@ func (rf *Raft) fillRequestVoteArgs(args *RequestVoteArgs) {
  * 4.比较最后一项日志的Term，也就是LastLogTerm，相同的话比较索引，也就是LastLogIndex，如果当前节点较新的话就不会投票，否则投票
  */
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
+	if atomic.LoadInt32(rf.ConnectIsok) == 0{
+		reply.IsOk = false
+		return nil
+	}
+	fmt.Printf("%d : 收到选举请求成功\n",rf.me)
+	reply.IsOk = true
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -229,8 +242,13 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	err := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	flag := true
 	if err != nil{
-		log.Fatal(err.Error())
+		log.Println(err.Error())
 		flag = false
+	} else if !reply.IsOk{
+		log.Println("The server is not connected to other servers in the cluster.")
+		flag = false
+	} else {
+		log.Printf("%d 选举请求成功!\n", rf.me)
 	}
 	return flag
 }
@@ -252,6 +270,8 @@ type AppendEntriesReply struct {
 	// 用于同步日志
 	ConflictTerm int // term of the conflicting entry
 	FirstIndex   int // the first index it stores for ConflictTerm
+
+	IsOk bool
 }
 
 func (rf *Raft) turnToFollow() {
@@ -264,6 +284,15 @@ func (rf *Raft) turnToFollow() {
  * 其实一共四种情况，就是follower日志多于leader，follower日志少于leader，follower日志等于leader（最新index处Term是否相同）
  */
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) error {
+	if atomic.LoadInt32(rf.ConnectIsok) == 0{
+		reply.IsOk = false
+		return nil
+	}
+
+	log.Println("接收 AppendEntries 请求成功\n")
+
+	reply.IsOk = true
+
 	DPrintf("[%d]: rpc AE, from peer: %d, term: %d\n", rf.me, args.LeaderID, args.Term)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -370,7 +399,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	err := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	flag := true
 	if err != nil{
-		log.Fatal(err.Error())
+		log.Println(err.Error())
+		flag = false
+	} else if !reply.IsOk{
+		log.Println("The server is not connected to other servers in the cluster.")
 		flag = false
 	}
 	return flag
@@ -412,6 +444,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
  * @ret: void
  */
 func (rf *Raft) consistencyCheckReplyHandler(n int, reply *AppendEntriesReply) {
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -699,14 +732,25 @@ func (rf *Raft) electionDaemon() {
 	}
 }
 
+func (rf *Raft) MakeRaftServer(peers []*rpc.Client){
+	rf.peers = peers
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
+
+	go rf.electionDaemon()      // kick off election
+	go rf.applyLogEntryDaemon() // start apply log
+
+	DPrintf("[%d]: newborn election(%s) heartbeat(%s) term(%d) voted(%d)\n",
+		rf.me, rf.electionTimeout, rf.heartbeatInterval, rf.CurrentTerm, rf.VotedFor)
+}
+
 /*
  * @brief: 用于创建一个raft实体
  */
 // TODO 这里传入的实体很有意思，这里就已经知道了如何与其他服务器通信和持久化的具体策略，并被传入一个chan
-func Make(peers []*rpc.Client, me uint64,
-	persister *Persister.Persister, applyCh chan ApplyMsg) *Raft {
+func MakeRaftInit(me uint64,
+	persister *Persister.Persister, applyCh chan ApplyMsg, IsOk *int32) *Raft {
 	rf := &Raft{}
-	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
 	rf.applyCh = applyCh
@@ -718,8 +762,6 @@ func Make(peers []*rpc.Client, me uint64,
 		Term: 0,
 		Command: nil,
 	}
-	rf.nextIndex = make([]int, len(peers))
-	rf.matchIndex = make([]int, len(peers))
 
 	// 400~800 ms
 	rf.electionTimeout = time.Millisecond * time.Duration(400+rand.Intn(100)*4)
@@ -736,11 +778,8 @@ func Make(peers []*rpc.Client, me uint64,
 	rf.lastApplied = rf.snapshotIndex
 	rf.commitIndex = rf.snapshotIndex
 
-	go rf.electionDaemon()      // kick off election
-	go rf.applyLogEntryDaemon() // start apply log
+	rf.ConnectIsok = IsOk
 
-	DPrintf("[%d]: newborn election(%s) heartbeat(%s) term(%d) voted(%d)\n",
-		rf.me, rf.electionTimeout, rf.heartbeatInterval, rf.CurrentTerm, rf.VotedFor)
 	return rf
 }
 
@@ -779,9 +818,16 @@ type InstallSnapshotArgs struct {
 
 type InstallSnapshotReply struct {
 	CurrentTerm int 	// leader可能已经落后了，用于更新leader
+
+	IsOk bool
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) error {
+	if atomic.LoadInt32(rf.ConnectIsok) == 0{
+		reply.IsOk = false
+		return nil
+	}
+	reply.IsOk = true
 	select {
 	case <-rf.shutdownCh:
 		DPrintf("[%d]: peer %d is shutting down, reject install snapshot rpc request.\n",
@@ -854,7 +900,10 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	err := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	flag := true
 	if err != nil{
-		log.Fatal(err.Error())
+		log.Println(err.Error())
+		flag = false
+	} else if !reply.IsOk{
+		log.Println("The server is not connected to other servers in the cluster.")
 		flag = false
 	}
 	return flag

@@ -8,6 +8,7 @@ import (
 	"net/rpc"
 	"sync"
 "bytes"
+	"sync/atomic"
 )
 
 const Debug = 0
@@ -50,9 +51,36 @@ type RaftKV struct {
 
 	shutdownCh chan struct{}
 
+	// 显然这个数的最大值就是1，也就是连接成功的时候，且只有两种情况，即0和1
+	// 不使用bool的原因是Golang的atomic貌似没有像C++一样提供atomic_flag这样保证无锁的bool值
+	// 如果硬用bool加锁的话又慢又不好写，因为raft和kvraft应该是共享这个值的
+	ConnectIsok *int32		// 用于同步各服务器之间的服务的具体启动时间 且raft与kvraft应该使用同一个值
+/*
+ * ok是此进程连接上所有其他服务器的时间点，显然后ok的进程与先ok的进程可以立即通信
+ * 显然在 p1 刚刚 ok 时对其他服务器进行的选举和心跳行为应该是无效的;所以所有被RPC的函数都应该先判断ConnectIsok才决定是否返回值
+ * 但是其实p1的守护进程已经开启了
+ * 目前的做法是在每个服务器端设置一个字段称为ConnectIsok
+ * 在被远端进行RPC的时候，如果本段的连接还没有完成，就给RPC返回失败
+	p1			p2			p3
+	ok
+				ok
+							ok
+*/
+}
+
+// 用于server_handler.go,注册raft服务
+func (kv *RaftKV) GetRaft() *Raft.Raft{
+	return kv.rf
 }
 
 func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
+	// kvraft的这个也可能被触发，用于客户端连接上三个服务器，但其中一台服务器还没有连接到全部的别的服务器，此时对于这个服务器来说应该拒绝请求
+	// 客户端只需要切换leader就ok了
+	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+		reply.Err = ConnectError
+		return nil
+	}
+
 	// 当前已经不是leader了，自然立马返回
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = NoLeader
@@ -104,6 +132,12 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 }
 
 func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
+	// 本端还没有与其他服务器连接成功
+	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+		reply.Err = ConnectError
+		return nil
+	}
+
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = NoLeader
 		return nil
@@ -262,7 +296,7 @@ func (kv *RaftKV) readSnapshot(data []byte) {
 
 }*/
 
-func StartKVServer(servers []*rpc.Client, me uint64, persister *Persister.Persister, maxraftstate int) *RaftKV {
+func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate int) *RaftKV {
 	gob.Register(Op{})
 
 	kv := new(RaftKV)
@@ -279,12 +313,24 @@ func StartKVServer(servers []*rpc.Client, me uint64, persister *Persister.Persis
 
 	kv.ClientSeqCache = make(map[int64]*LatestReply)
 
-	// 开始的时候读取快照
-	kv.readSnapshot(kv.persist.ReadSnapshot())
-	//
-	kv.rf = Raft.Make(servers, me, persister, kv.applyCh)
-
-	go kv.applyDaemon()
+	var Isok int32 = 0	// 最大只能是1 因为只有在连接成功的时候会加一次
+	kv.ConnectIsok = &Isok
 
 	return kv
+}
+
+func (kv *RaftKV)StartKVServer(servers []*rpc.Client){
+	// 开始的时候读取快照
+	kv.readSnapshot(kv.persist.ReadSnapshot())
+
+	atomic.AddInt32(kv.ConnectIsok, 1)	// 到这肯定已经连接上其他的服务器了
+
+	// 启动kv的服务
+	kv.rf.MakeRaftServer(servers)
+
+	go kv.applyDaemon()
+}
+
+func (kv *RaftKV) StartRaftServer(){
+	kv.rf = Raft.MakeRaftInit(kv.me, kv.persist, kv.applyCh, kv.ConnectIsok)
 }
