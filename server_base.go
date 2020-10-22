@@ -1,11 +1,18 @@
 package main
 
-import "HummingbirdDS/Connect"
+import (
+	"HummingbirdDS/Connect"
+	"fmt"
+)
 import _ "HummingbirdDS/Config"
 
 func main(){
 	cfg := Connect.CreatServer(3)
-	cfg.StartServer()
+	err :=  cfg.StartServer()
+	if err != nil {
+		fmt.Println(err.Error())
+		return
+	}
 	for true {
 
 	}

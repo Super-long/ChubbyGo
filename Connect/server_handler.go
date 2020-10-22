@@ -24,10 +24,10 @@ type ServerConfig struct {
 	persister *Persister.Persister // 持久化实体
 	mu        sync.Mutex           // 用于保护本结构体的变量
 	// 不设置成大写没办法从配置文件中读出来
-	Maxreries      int      `json:"maxreries"` 			// 超时重连最大数
-	ServersAddress []string `json:"servers_address"`   	// 读取配置文件中的其他服务器地址
-	MyPort         string   `json:"myport"`    			// 自己的端口号
-	TimeOutEntry   int		`json:"timeout_entry"`		// connectAll中定义的重传超时间隔 单位为毫秒
+	Maxreries      int      `json:"maxreries"`       // 超时重连最大数
+	ServersAddress []string `json:"servers_address"` // 读取配置文件中的其他服务器地址
+	MyPort         string   `json:"myport"`          // 自己的端口号
+	TimeOutEntry   int      `json:"timeout_entry"`   // connectAll中定义的重传超时间隔 单位为毫秒
 }
 
 /*
@@ -84,7 +84,7 @@ func (cfg *ServerConfig) connectAll() error {
 						} else {
 							// cfg.mu.Lock()
 							// defer cfg.mu.Unlock()	// 没有协程会碰这个
-							log.Printf("%d : 与%d 连接成功\n", cfg.me,cfg.ServersAddress[index])
+							log.Printf("%d : 与%d 连接成功\n", cfg.me, cfg.ServersAddress[index])
 							cfg.peers[index] = TempClient
 							return
 						}
@@ -101,7 +101,7 @@ func (cfg *ServerConfig) connectAll() error {
 				atomic.AddInt32(&HTTPError, 1)
 			}
 		} else {
-			log.Printf("%d : 与%d 连接成功\n", cfg.me,cfg.ServersAddress[i])
+			log.Printf("%d : 与%d 连接成功\n", cfg.me, cfg.ServersAddress[i])
 			cfg.peers[i] = client
 		}
 	}
@@ -118,7 +118,7 @@ func (cfg *ServerConfig) connectAll() error {
 		}
 		return ErrorInConnectAll(http_error)
 	} else {
-		return nil	// 没有发生任何错误 成功
+		return nil // 没有发生任何错误 成功
 	}
 }
 
@@ -152,6 +152,42 @@ func (cfg *ServerConfig) serverRegisterFun() {
 }
 
 /*
+ * @brief: 检查从json中解析的字段是否符合规定
+ * @return: 解析正确返回true,错误为false
+ */
+
+func (cfg *ServerConfig) checkJsonParser() error {
+	// 当配置数小于7的时候，留给其他服务器启动的时间太少，配置为8的时候，至少已经过了51秒了(2^9-2^1)
+	if cfg.Maxreries <= 7 {
+		return ErrorInParserConfig(maxreries_to_small)
+	}
+
+	ServerAddressLength := len(cfg.ServersAddress)
+
+	if ServerAddressLength < 2 { // 至少三台，且推荐为奇数,计算时加上自己
+		return ErrorInParserConfig(serveraddress_length_to_small)
+	}
+
+	for _, AddressItem := range cfg.ServersAddress {
+		if !ParserIP(AddressItem) {
+			return ErrorInParserConfig(serveraddress_format_error)
+		}
+	}
+
+	if !parserMyPort(cfg.MyPort) {
+		return ErrorInParserConfig(parser_port_error)
+	}
+
+	// TODO 看下几个函数的收敛区间
+	// 一个超时区间不能太大或者太小。这个区间是可以保证
+	if cfg.TimeOutEntry <= 100 || cfg.TimeOutEntry >= 2000 {
+		return ErrorInParserConfig(time_out_entry_error)
+	}
+
+	return nil
+}
+
+/*
  * @brief: 再调用这个函数的时候开始服务,
  * @return: 三种返回类型：路径解析错误;connectAll连接出现问题;成功
  */
@@ -160,10 +196,17 @@ func (cfg *ServerConfig) StartServer() error {
 	if len(ServerListeners) == 1 {
 		// 正确读取配置文件 TODO 记得后面路径改一手
 		flag = ServerListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/server_config.json", cfg)
-		if !flag {
-			log.Println("File parser Error!")
+		if !flag {	// 文件打开失败
+			log.Printf("Open config File Error!")
 			return ErrorInStartServer(parser_error)
 		}
+
+		// 从json中取出的字段格式错误
+		if ParserErr := cfg.checkJsonParser(); ParserErr != nil {
+			log.Println(ParserErr.Error())
+			return ErrorInStartServer(parser_error)
+		}
+
 	} else {
 		log.Println("ServerListeners Error!")
 		// 这种情况只有在调用服务没有启动read_server_config.go的init函数时会出现
@@ -179,8 +222,8 @@ func (cfg *ServerConfig) StartServer() error {
 		log.Println(err.Error())
 		return ErrorInStartServer(connect_error)
 	}
-	cfg.kvserver.StartKVServer(cfg.peers)	// 启动服务
-	log.Printf("%s : 连接成功 且服务以启动成功 \n" , cfg.MyPort)
+	cfg.kvserver.StartKVServer(cfg.peers) // 启动服务
+	log.Printf("%s : 连接成功 且服务以启动成功 \n", cfg.MyPort)
 	return nil
 }
 

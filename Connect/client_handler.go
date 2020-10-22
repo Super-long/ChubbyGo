@@ -139,6 +139,14 @@ func (cfg *ClientConfig) StartClient() error {
 			log.Println("File parser Error!")
 			return ErrorInStartServer(parser_error)
 		}
+
+		// 从json中取出的字段格式错误
+		if ParserErr := cfg.checkJsonParser(); ParserErr != nil {
+			log.Println(ParserErr.Error())
+			return ErrorInStartServer(parser_error)
+		}
+
+
 		cfg.nservers = len(cfg.ServersAddress)
 		cfg.servers = make([]*rpc.Client, cfg.nservers)
 	} else {
@@ -152,6 +160,37 @@ func (cfg *ClientConfig) StartClient() error {
 		return ErrorInStartServer(connect_error)
 	}
 	cfg.clk = KvServer.MakeClerk(cfg.servers)
+	return nil
+}
+
+/*
+ * @brief: 检查从json中解析的字段是否符合规定
+ * @return: 解析正确返回true,错误为false
+ */
+func (cfg *ClientConfig) checkJsonParser() error {
+	// 当配置数小于7的时候，留给其他服务器启动的时间太少，配置为8的时候，至少已经过了51秒了(2^9-2^1)
+	if cfg.Maxreries <= 7 {
+		return ErrorInParserConfig(maxreries_to_small)
+	}
+
+	ServerAddressLength := len(cfg.ServersAddress)
+
+	if ServerAddressLength <= 2 { // 至少三台，客户端不需要计算自己
+		return ErrorInParserConfig(serveraddress_length_to_small)
+	}
+
+	for _, AddressItem := range cfg.ServersAddress {
+		if !ParserIP(AddressItem) {
+			return ErrorInParserConfig(serveraddress_format_error)
+		}
+	}
+
+	// TODO 看下几个函数的收敛区间 等生成图像以后看一看
+	// 一个超时区间不能太大或者太小。这个区间是可以保证
+	if cfg.TimeOutEntry <= 100 || cfg.TimeOutEntry >= 2000 {
+		return ErrorInParserConfig(time_out_entry_error)
+	}
+
 	return nil
 }
 
