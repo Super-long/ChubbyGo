@@ -49,7 +49,8 @@ type Raft struct {
 	mu        sync.Mutex          	// Lock to protect shared access to this peer's state
 	peers     []*rpc.Client 	// RPC end points of all peers
 	persister *Persister.Persister         	// Object to hold this peer's persisted state
-	me        uint64                 	// 自己的序号
+	me        uint64                // 用于唯一标识每一台服务器
+	meIndex	  int					// 对于每一个服务器来说,永远是从config中载入的地址数加1,peers的长度也总是config中载入的地址数，me的标示也就不重要了
 
 	CurrentTerm int        			// 服务器最后一次知道的任期号（初始化为 0，持续递增）
 	VotedFor    uint64        			// 在当前获得选票的候选人的 Id
@@ -195,7 +196,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 		reply.IsOk = false
 		return nil
 	}
-	fmt.Printf("%d : 收到选举请求成功\n",rf.me)
+
+	// fmt.Printf("当前Term : %d  对端Term: %d。  %d:收到选举请求成功,当前已投票： %d \n",rf.CurrentTerm, args.Term,rf.me, rf.VotedFor)
 	reply.IsOk = true
 
 	rf.mu.Lock()
@@ -213,6 +215,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 		reply.VoteGranted = false
 	} else {
 		if args.Term > rf.CurrentTerm {
+			// 进入新Term，把票投出去
 			rf.CurrentTerm = args.Term
 			rf.state = Follower
 			rf.VotedFor = 0
@@ -222,7 +225,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 			// 对比双方日志，只有这一种情况会投票：即未投票，且对方最新日志项Term高于自己的日志项时
 			if (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIdx) ||
 				args.LastLogTerm > lastLogTerm {	// 请求投票者日志新于自己
-
+				// log.Printf("当前Term %d， 投票给 %d\n",rf.CurrentTerm, args.Term)
 				rf.resetTimer <- struct{}{} // 重置选举超时
 
 				rf.state = Follower
@@ -348,11 +351,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 每次添加日志以后判断需不需要commit
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = min(args.LeaderCommit, last)
-			// signal possible update commit index
+			// 更新日志的commitIndex
 			rf.commitCond.Broadcast()
 		}
 		// 告诉leader去更新这个副本以匹配的index
-		reply.ConflictTerm = rf.Logs[last-rf.snapshotIndex].Term	// 就是不冲突嘛
+		reply.ConflictTerm = rf.Logs[last-rf.snapshotIndex].Term	// 也就是不冲突
 		reply.FirstIndex = last
 
 		if len(args.Entries) > 0 {
@@ -373,7 +376,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			first = len(rf.Logs) + rf.snapshotIndex
 			reply.ConflictTerm = rf.Logs[first-1-rf.snapshotIndex].Term
 		} else {
-			i := preLogIdx - 1
+			i := preLogIdx - 1	// 这一点已经冲突，从上一点开始找
 			for ; i > rf.snapshotIndex; i-- {
 				if rf.Logs[i-rf.snapshotIndex].Term != preLogTerm {
 					first = i + 1	// 从下一条日志开始发送，也就是不匹配的地方，这里我们找到了匹配的地方，也就是一次跳一个Term
@@ -429,8 +432,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		DPrintf("[%d]: client add new entry (%d-%v)\n", rf.me, index, command)
 
 		// 只是更新自己而已
-		rf.nextIndex[rf.me] = index + 1
-		rf.matchIndex[rf.me] = index
+		rf.nextIndex[rf.meIndex] = index + 1
+		rf.matchIndex[rf.meIndex] = index
 
 		rf.persist()
 	}
@@ -467,7 +470,7 @@ func (rf *Raft) consistencyCheckReplyHandler(n int, reply *AppendEntriesReply) {
 				rf.me, rf.me, n)
 			return
 		}
-		// Does leader know conflicting term?
+
 		var know, lastIndex = false, 0
 		// 发现副本出现冲突
 		if reply.ConflictTerm != 0 {
@@ -557,11 +560,10 @@ func (rf *Raft) heartbeatDaemon() {
 		case <-rf.shutdownCh:
 			return
 		default:
-			for i := 0; i < len(rf.peers); i++ {
-				if uint64(i) != rf.me {
-					// 发送心跳包
-					go rf.consistencyCheck(i)
-				}
+			PeersLength := len(rf.peers)
+			for i := 0; i < PeersLength; i++ {
+				// 发送心跳包
+				go rf.consistencyCheck(i)
 			}
 		}
 		// 因为心跳就需要这么长时间一次，也不会被其他事情打断，所以直接sleep就ok，不需要用定时器，代码还简单
@@ -668,27 +670,29 @@ func (rf *Raft) canvassVotes() {
 				rf.resetTimer <- struct{}{} // reset timer
 				return
 			}
+			fmt.Println()
 			if reply.VoteGranted {	// 选举成功
-				if votes == peers/2 {
+				votes++	// 10月22日 修改，这里竟然写错位置了！导致一节点宕机时其他两节点无法达成共识，因为对端投票这里没加，下一次又跳Term，这个投票就无效了，三小时啊
+				// log.Printf("-----Term : %d -----votes : %d ; expected : %d --------\n",rf.CurrentTerm,votes, (peers+1)/2 + 1)
+				if votes == (peers+1)/2 + 1 {	// peers比实际机器数少1，不计算自己
 					rf.state = Leader
 					rf.resetOnElection()    // 重置leader状态
 					go rf.heartbeatDaemon() // 选举成功以后 执行心跳协程
 					DPrintf("[%d]: peer %d become new leader.\n", rf.me, rf.me)
 					return
 				}
-				votes++
+				// votes++
 			}
 		}
 	}
 	for i := 0; i < peers; i++ {
-		if uint64(i) != rf.me {
-			go func(n int) {
-				var reply RequestVoteReply
-				if rf.sendRequestVote(n, &voteArgs, &reply) {
-					replyHandler(&reply)
-				}
-			}(i)
-		}
+		// 这peers项全部都是对等的服务器
+		go func(n int) {
+			var reply RequestVoteReply
+			if rf.sendRequestVote(n, &voteArgs, &reply) {
+				replyHandler(&reply)
+			}
+		}(i)
 	}
 }
 
@@ -700,13 +704,11 @@ func (rf *Raft) resetOnElection() {
 	count := len(rf.peers)
 	length := len(rf.Logs) + rf.snapshotIndex
 
-	for i := 0; i < count; i++ {
+	for i := 0; i < count; i++ {	// 更新其他对端服务器
 		rf.matchIndex[i] = 0
-		rf.nextIndex[i] = length	//
-		if uint64(i) == rf.me {
-			rf.matchIndex[i] = length - 1
-		}
+		rf.nextIndex[i] = length
 	}
+	rf.matchIndex[rf.meIndex] = length - 1
 }
 
 /*
@@ -727,15 +729,20 @@ func (rf *Raft) electionDaemon() {
 			DPrintf("[%d]: peer %d election timeout, issue election @ term %d\n",
 				rf.me, rf.me, rf.CurrentTerm)
 			go rf.canvassVotes()
-			rf.electionTimer.Reset(rf.electionTimeout)
+			// 防止第一次每台服务器随机的值差不多，造成活锁
+			rf.electionTimer.Reset(time.Millisecond * time.Duration(400+rand.Intn(100)*4))
 		}
 	}
 }
 
 func (rf *Raft) MakeRaftServer(peers []*rpc.Client){
 	rf.peers = peers
-	rf.nextIndex = make([]int, len(peers))
-	rf.matchIndex = make([]int, len(peers))
+	// 多的这一项是自己,为更新其他服务器
+	peerLength := len(peers)
+	rf.nextIndex = make([]int, peerLength + 1)
+	rf.matchIndex = make([]int, peerLength + 1)
+	// 对于每一个服务器来说前peerLength项都是与其他服务器的通信实体，index为peerLength的即是自己
+	rf.meIndex = peerLength
 
 	go rf.electionDaemon()      // kick off election
 	go rf.applyLogEntryDaemon() // start apply log
@@ -770,7 +777,7 @@ func MakeRaftInit(me uint64,
 	rf.resetTimer = make(chan struct{})
 	rf.shutdownCh = make(chan struct{})          // shutdown raft gracefully
 	rf.commitCond = sync.NewCond(&rf.mu)         // commitCh, a distinct goroutine
-	rf.heartbeatInterval = time.Millisecond * 40 // small enough, not too small
+	rf.heartbeatInterval = time.Millisecond * 50 // small enough, not too small
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

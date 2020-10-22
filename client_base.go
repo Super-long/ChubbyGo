@@ -11,7 +11,7 @@ import (
 
 func main(){
 	// 目前测试一个客户端
-	n := 1
+	n := 10
 	clientConfigs := make([]*Connect.ClientConfig,n)
 	for i := 0; i < n; i++ {
 		clientConfigs[i] = Connect.CreateClient()
