@@ -28,7 +28,7 @@ func LoadServerConfig(filename string, cfg *Connect.ServerConfig) bool {
 	// Unmarshal对于结构体偏向于精确匹配，也接收不精确匹配
 	err = json.Unmarshal(data, &cfg)
 	// 太扯了 不加双引号解不出数组
-	// fmt.Printf("data %s : length %d : %s : %d\n",data, len(cfg.ServersAddress), cfg.MyPort, cfg.Maxreries)
+	// fmt.Printf("data %s : length %d : %s : %d %d\n",data, len(cfg.ServersAddress), cfg.MyPort, cfg.MaxRaftState,cfg.TimeOutEntry)
 	if err != nil {
 		log.Println("unmarshal json file error")
 		return false

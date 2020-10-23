@@ -2,12 +2,13 @@ package KvServer
 
 import (
 	"HummingbirdDS/Persister"
+	"HummingbirdDS/Raft"
+	"bytes"
 	"encoding/gob"
-"HummingbirdDS/Raft"
-"log"
+	"fmt"
+	"log"
 	"net/rpc"
 	"sync"
-"bytes"
 	"sync/atomic"
 )
 
@@ -41,7 +42,7 @@ type RaftKV struct {
 	applyCh chan Raft.ApplyMsg
 
 	maxraftstate int 								// 快照的阈值
-	persist       *Persister.Persister				// 用于持久化
+	persist       			*Persister.Persister	// 用于持久化
 	LogIndexNotice     		map[int]chan struct{} 	// 用于服务器与raft层同步信息
 
 	// 需要持久化的信息
@@ -128,6 +129,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:
 	}
+	log.Printf("INFO : %d, GET:key(%s)\n", args.ClientID,args.Key)
 	return nil
 }
 
@@ -148,6 +150,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	kv.mu.Lock()
 	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		//log.Printf("DEBUG : args.SeqNo : %d , dup.Seq : %d\n", args.SeqNo, dup.Seq)
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
 			reply.Err = Duplicate
@@ -158,6 +161,8 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	// 新请求
 	NewOperation := Op{Key: args.Key, Value: args.Value, Op: args.Op, ClientID: args.ClientID, Clientseq: args.SeqNo}
 	index, term, _ := kv.rf.Start(NewOperation)
+	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
+
 	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 	kv.mu.Unlock()
@@ -174,6 +179,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	case <-kv.shutdownCh:
 		return nil
 	}
+	log.Printf("INFO : %s, PUTAPPEND:key(%s),value(%s)\n", args.ClientID,args.Key, args.Value)
 	return nil
 }
 
@@ -199,12 +205,17 @@ func (kv *RaftKV) applyDaemon() {
 					kv.mu.Unlock()
 					continue
 				}
-
+				if msg.Command == nil {
+					fmt.Println("msg.Command is null")
+				}
 				if msg.Command != nil && msg.Index > kv.snapshotIndex {
 					cmd := msg.Command.(Op)
 					kv.mu.Lock()
 					//	显然在是一个新用户或者新操作seq大于ClientSeqCache中的值时才执行
 					if dup, ok := kv.ClientSeqCache[int64(cmd.ClientID)]; !ok || dup.Seq < cmd.Clientseq {
+						//if ok {
+						//	log.Printf("DEBUG : dup.Seq %d ; cmd.Clientseq %d\n", dup.Seq , cmd.Clientseq)
+						//}
 						switch cmd.Op {
 						case "Get":
 							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,
@@ -223,6 +234,9 @@ func (kv *RaftKV) applyDaemon() {
 							DPrintf("[%d]: server %d apply index: %d, cmd: %v (client: %d, dup seq: %d < %d)\n",
 								kv.me, kv.me, msg.Index, cmd, cmd.ClientID, dup.Seq, cmd.Clientseq)
 						}
+					}else {
+						log.Println("WARNING : Multiple clients have the same ID !")
+						// log.Printf("错误情况 dup.Seq %d ; cmd.Clientseq %d\n", dup.Seq , cmd.Clientseq)
 					}
 					// msg.IsSnapshot && kv.isUpperThanMaxraftstate()
 					if kv.isUpperThanMaxraftstate() {

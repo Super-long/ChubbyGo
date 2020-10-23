@@ -24,6 +24,7 @@ type ServerConfig struct {
 	persister *Persister.Persister // 持久化实体
 	mu        sync.Mutex           // 用于保护本结构体的变量
 	// 不设置成大写没办法从配置文件中读出来
+	MaxRaftState   int      `json:"maxraftstate"`    // raft层日志压缩上限
 	Maxreries      int      `json:"maxreries"`       // 超时重连最大数
 	ServersAddress []string `json:"servers_address"` // 读取配置文件中的其他服务器地址
 	MyPort         string   `json:"myport"`          // 自己的端口号
@@ -84,7 +85,7 @@ func (cfg *ServerConfig) connectAll() error {
 						} else {
 							// cfg.mu.Lock()
 							// defer cfg.mu.Unlock()	// 没有协程会碰这个
-							log.Printf("%d : 与%d 连接成功\n", cfg.me, cfg.ServersAddress[index])
+							log.Printf("INFO : %d 与 %s 连接成功\n", cfg.me, cfg.ServersAddress[index])
 							cfg.peers[index] = TempClient
 							return
 						}
@@ -101,7 +102,7 @@ func (cfg *ServerConfig) connectAll() error {
 				atomic.AddInt32(&HTTPError, 1)
 			}
 		} else {
-			log.Printf("%d : 与%d 连接成功\n", cfg.me, cfg.ServersAddress[i])
+			log.Printf("INFO : %d 与 %s 连接成功\n", cfg.me, cfg.ServersAddress[i])
 			cfg.peers[i] = client
 		}
 	}
@@ -122,6 +123,9 @@ func (cfg *ServerConfig) connectAll() error {
 	}
 }
 
+/*
+ * @brief: 把raft和kvraft的挂到RPC上
+ */
 func (cfg *ServerConfig) serverRegisterFun() {
 
 	// 把RaftKv挂到RPC上
@@ -155,7 +159,6 @@ func (cfg *ServerConfig) serverRegisterFun() {
  * @brief: 检查从json中解析的字段是否符合规定
  * @return: 解析正确返回true,错误为false
  */
-
 func (cfg *ServerConfig) checkJsonParser() error {
 	// 当配置数小于7的时候，留给其他服务器启动的时间太少，配置为8的时候，至少已经过了51秒了(2^9-2^1)
 	if cfg.Maxreries <= 7 {
@@ -184,6 +187,11 @@ func (cfg *ServerConfig) checkJsonParser() error {
 		return ErrorInParserConfig(time_out_entry_error)
 	}
 
+	// /proc/cpuinfo https://blog.csdn.net/wswit/article/details/52665413 l2 cache
+	if cfg.MaxRaftState < 0 || cfg.MaxRaftState > 2097152 {
+		return ErrorInParserConfig(raft_maxraftstate_not_suitable)
+	}
+
 	return nil
 }
 
@@ -194,9 +202,9 @@ func (cfg *ServerConfig) checkJsonParser() error {
 func (cfg *ServerConfig) StartServer() error {
 	var flag bool = false
 	if len(ServerListeners) == 1 {
-		// 正确读取配置文件
+		// 正确读取配置文件;这里注意,checkJsonParser是检查范围和字符串的格式,解析的过程会把int转string之间的错误解析出来
 		flag = ServerListeners[0]("Config/server_config.json", cfg)
-		if !flag {	// 文件打开失败
+		if !flag { // 文件打开失败
 			log.Printf("Open config File Error!")
 			return ErrorInStartServer(parser_error)
 		}
@@ -214,8 +222,7 @@ func (cfg *ServerConfig) StartServer() error {
 	}
 
 	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
-	// TODO json中加上最大日志限制
-	cfg.kvserver = KvServer.StartKVServerInit(cfg.me, cfg.persister, 0)
+	cfg.kvserver = KvServer.StartKVServerInit(cfg.me, cfg.persister, cfg.MaxRaftState)
 	cfg.kvserver.StartRaftServer()
 
 	cfg.serverRegisterFun()
@@ -224,7 +231,7 @@ func (cfg *ServerConfig) StartServer() error {
 		return ErrorInStartServer(connect_error)
 	}
 	cfg.kvserver.StartKVServer(cfg.peers) // 启动服务
-	log.Printf("%s : 连接成功 且服务以启动成功 \n", cfg.MyPort)
+	log.Printf("INFO %s : 连接成功 且服务以启动成功 \n", cfg.MyPort)
 	return nil
 }
 
@@ -236,6 +243,7 @@ func CreatServer(nservers int) *ServerConfig {
 	cfg := &ServerConfig{}
 
 	cfg.nservers = nservers
+	cfg.MaxRaftState = 0
 	cfg.peers = make([]*rpc.Client, cfg.nservers-1) // 存储了自己以外的其他服务器的RPC封装
 	cfg.me = Flake.GenSonyflake()                   // 全局ID需要传给raft层
 	cfg.persister = Persister.MakePersister()

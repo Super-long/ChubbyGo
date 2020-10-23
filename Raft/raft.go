@@ -245,13 +245,11 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	err := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	flag := true
 	if err != nil{
-		log.Println(err.Error())
+		log.Println("INFO : ", err.Error())
 		flag = false
 	} else if !reply.IsOk{
-		log.Println("The server is not connected to other servers in the cluster.")
+		log.Println("INFO : The server is not connected to other servers in the cluster.")
 		flag = false
-	} else {
-		log.Printf("%d 选举请求成功!\n", rf.me)
 	}
 	return flag
 }
@@ -292,7 +290,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return nil
 	}
 
-	log.Println("接收 AppendEntries 请求成功\n")
+	// log.Println("DEBUG : 接收 AppendEntries 请求成功\n")
 
 	reply.IsOk = true
 
@@ -402,10 +400,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	err := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	flag := true
 	if err != nil{
-		log.Println(err.Error())
+		log.Println("INFO : ", err.Error())
 		flag = false
 	} else if !reply.IsOk{
-		log.Println("The server is not connected to other servers in the cluster.")
+		log.Println("INFO : The server is not connected to other servers in the cluster.")
 		flag = false
 	}
 	return flag
@@ -673,7 +671,7 @@ func (rf *Raft) canvassVotes() {
 			fmt.Println()
 			if reply.VoteGranted {	// 选举成功
 				votes++	// 10月22日 修改，这里竟然写错位置了！导致一节点宕机时其他两节点无法达成共识，因为对端投票这里没加，下一次又跳Term，这个投票就无效了，三小时啊
-				// log.Printf("-----Term : %d -----votes : %d ; expected : %d --------\n",rf.CurrentTerm,votes, (peers+1)/2 + 1)
+				// log.Printf("DEBUG : Term : %d ; votes : %d ; expected : %d\n",rf.CurrentTerm,votes, (peers+1)/2 + 1)
 				if votes == (peers+1)/2 + 1 {	// peers比实际机器数少1，不计算自己
 					rf.state = Leader
 					rf.resetOnElection()    // 重置leader状态
@@ -907,10 +905,10 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	err := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	flag := true
 	if err != nil{
-		log.Println(err.Error())
+		log.Println("INFO : ", err.Error())
 		flag = false
 	} else if !reply.IsOk{
-		log.Println("The server is not connected to other servers in the cluster.")
+		log.Println("INFO : The server is not connected to other servers in the cluster.")
 		flag = false
 	}
 	return flag

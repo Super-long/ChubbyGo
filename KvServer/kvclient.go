@@ -11,16 +11,14 @@ import (
 	"time"
 )
 
-var clients = make(map[int64]bool)
-
 type Clerk struct {
 	servers []*rpc.Client
 
-	leader 		int   		// 记录哪一个是leader
+	leader int // 记录哪一个是leader
 	// 为了保证操作的一致性
-	seq    		int   		// 当前的操作数
-	ClientID    uint64 		// 记录当前客户端的序号
-	serversIsOk *[]int32	// 用于记录那一个服务器当前可以连接，是一个bool位
+	seq         int      // 当前的操作数
+	ClientID    uint64   // 记录当前客户端的序号
+	serversIsOk *[]int32 // 用于记录那一个服务器当前可以连接，是一个bool位
 }
 
 func nrand() int64 {
@@ -30,13 +28,13 @@ func nrand() int64 {
 	return x
 }
 
-// 在创建的时候已经知道了如何于服务端交互
+// 在创建的时候已经知道了如何与服务端交互
 func MakeClerk(servers []*rpc.Client, IsOk *[]int32) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	ck.serversIsOk = IsOk
 
-	ck.leader = mrand.Intn(len(servers))	// 随机选择一个起始值 生成(0,len(server)-1)的随机数
+	ck.leader = mrand.Intn(len(servers)) // 随机选择一个起始值 生成(0,len(server)-1)的随机数
 	ck.seq = 1
 	ck.ClientID = Flake.GenSonyflake()
 
@@ -57,16 +55,16 @@ func (ck *Clerk) Get(key string) string {
 
 		ck.leader %= serverLength
 		// go中*和[]优先级不一样，要加个括号，挺扯的
-		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0{
+		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0 {
 			ck.leader++
-			continue	// 不能连接就切换
+			continue // 不能连接就切换
 		}
 
 		replyArrival := make(chan bool, 1)
 		go func() {
 			err := ck.servers[ck.leader].Call("RaftKV.Get", args, reply)
 			flag := true
-			if err != nil{
+			if err != nil {
 				log.Fatal(err.Error())
 				flag = false
 			}
@@ -76,9 +74,10 @@ func (ck *Clerk) Get(key string) string {
 		case ok := <-replyArrival:
 			if ok {
 				if reply.Err == OK || reply.Err == ErrNoKey || reply.Err == Duplicate {
+					log.Println(ck.ClientID,  reply.Err, reply.Value)
 					ck.seq++
 					return reply.Value
-				} else if reply.Err == ReElection || reply.Err == NoLeader{ // 这两种情况我们需要重新发送请求 即重新选择主
+				} else if reply.Err == ReElection || reply.Err == NoLeader { // 这两种情况我们需要重新发送请求 即重新选择主
 					ck.leader++
 				}
 			} else {
@@ -101,16 +100,16 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 		ck.leader %= cnt
 
-		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0{
-			ck.leader++
-			continue	// 不能连接就切换
+		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0 {
+			ck.leader++ // 不能连接就切换
+			continue
 		}
 
 		replyArrival := make(chan bool, 1)
 		go func() {
 			err := ck.servers[ck.leader].Call("RaftKV.PutAppend", args, reply)
 			flag := true
-			if err != nil{
+			if err != nil {
 				log.Fatal(err.Error())
 				flag = false
 			}

@@ -84,6 +84,7 @@ const (
 	serveraddress_format_error
 	parser_port_error
 	time_out_entry_error
+	raft_maxraftstate_not_suitable
 )
 
 func (err ErrorInParserConfig) Error() string {
@@ -103,6 +104,9 @@ func (err ErrorInParserConfig) Error() string {
 		break
 	case time_out_entry_error:
 		ans = "Time out entry Too small or too big."
+		break
+	case raft_maxraftstate_not_suitable:
+		ans = "raft maxraftstate not suitable, Less than zero or greater than 2MB."
 		break
 	default:
 	}

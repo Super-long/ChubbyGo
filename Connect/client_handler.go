@@ -251,6 +251,19 @@ func (cfg *ClientConfig) checkJsonParser() error {
 	return nil
 }
 
+// --------------------------
+// DEBUG用的两个函数,发现雪花算法巨大的问题,同一进程内生成的一样,导致测试出现问题
+
+func (cfg *ClientConfig) GetUniqueFlake() uint64 {
+	return cfg.clk.ClientID
+}
+
+func (cfg *ClientConfig) SetUniqueFlake(value uint64) {
+	cfg.clk.ClientID = value
+}
+
+// --------------------------
+
 func (cfg *ClientConfig) Put(key string, value string) {
 	cfg.clk.Put(key, value)
 }
