@@ -1,6 +1,7 @@
 package Connect
 
 import (
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -162,4 +163,23 @@ func ParserIP(address string) bool {
 	}
 
 	return true
+}
+
+/*
+ * @brief: 李浩帮忙推出的服务器连接时间间隔函数
+ * @return: 毫秒，调用方不用转换
+ * @notes: TODO 目前看起来并不符合预期；后面可以再改，
+ */
+/*
+ * @example: 0 	  695  893  1005 1083 	// 可以看出前几次重试斜率还是太陡峭，后面太过平缓
+			 1142 1190 1230 1265 1295
+			 1322 1347 1369 1389 1408
+			 1426 1442 1457 1472 1485
+*/
+func ReturnInterval(n int) int {
+	molecular := math.Log(float64(n+1)) / math.Log(math.E)
+	temp := math.Log(float64(n+2)) / math.Log(1.5)
+	denominator := math.Log(temp) / math.Log(math.E)
+	res := molecular / denominator
+	return int(res * 1000)
 }

@@ -1,17 +1,19 @@
 package main
 
 import (
-	"HummingbirdDS/Connect"
 	_ "HummingbirdDS/Config"
+	"HummingbirdDS/Connect"
 	"fmt"
 	"log"
 	"strconv"
-	"time"
 )
 
 func main(){
 	// 目前测试一个客户端
-	n := 10
+	// TODO 多客户端目前出现问题 一半的数据出现问题
+	n := 2
+	Sem := make(Connect.Semaphore, n)
+	SemNumber := 0
 	clientConfigs := make([]*Connect.ClientConfig,n)
 	for i := 0; i < n; i++ {
 		clientConfigs[i] = Connect.CreateClient()
@@ -22,7 +24,9 @@ func main(){
 	}
 	fmt.Println("nihao ")
 	for i := 0; i < n; i++{
+		SemNumber++
 		go func(cliID int){
+			defer Sem.P(1)
 			for j := 0; j < 10; j++ {
 				nv := "x " + strconv.Itoa(cliID) + " " + strconv.Itoa(j) + " y"
 				clientConfigs[cliID].Put(strconv.Itoa(cliID),nv)
@@ -37,6 +41,7 @@ func main(){
 		}(i)
 	}
 
-	time.Sleep(10 *time.Second)
+	Sem.V(SemNumber)
+
 	fmt.Println("PASS!")
 }

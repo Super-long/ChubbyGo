@@ -36,7 +36,7 @@ type ServerConfig struct {
  */
 // peers出现了条件竞争；修复，把服务启动在连接完成以后
 func (cfg *ServerConfig) connectAll() error {
-	sem := make(semaphore, cfg.nservers-1)
+	sem := make(Semaphore, cfg.nservers-1)
 	sem_number := 0
 	var HTTPError int32 = 0
 	var TimeOut []int
@@ -194,8 +194,8 @@ func (cfg *ServerConfig) checkJsonParser() error {
 func (cfg *ServerConfig) StartServer() error {
 	var flag bool = false
 	if len(ServerListeners) == 1 {
-		// 正确读取配置文件 TODO 记得后面路径改一手
-		flag = ServerListeners[0]("/home/lzl/go/src/HummingbirdDS/Config/server_config.json", cfg)
+		// 正确读取配置文件
+		flag = ServerListeners[0]("Config/server_config.json", cfg)
 		if !flag {	// 文件打开失败
 			log.Printf("Open config File Error!")
 			return ErrorInStartServer(parser_error)
@@ -214,6 +214,7 @@ func (cfg *ServerConfig) StartServer() error {
 	}
 
 	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
+	// TODO json中加上最大日志限制
 	cfg.kvserver = KvServer.StartKVServerInit(cfg.me, cfg.persister, 0)
 	cfg.kvserver.StartRaftServer()
 

@@ -7,6 +7,7 @@ import (
 	"math/big"
 	mrand "math/rand"
 	"net/rpc"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,10 +16,11 @@ var clients = make(map[int64]bool)
 type Clerk struct {
 	servers []*rpc.Client
 
-	leader 		int   // 记录哪一个是leader
+	leader 		int   		// 记录哪一个是leader
 	// 为了保证操作的一致性
-	seq    		int   // 当前的操作数
-	ClientID    uint64 // 记录当前客户端的序号
+	seq    		int   		// 当前的操作数
+	ClientID    uint64 		// 记录当前客户端的序号
+	serversIsOk *[]int32	// 用于记录那一个服务器当前可以连接，是一个bool位
 }
 
 func nrand() int64 {
@@ -29,9 +31,10 @@ func nrand() int64 {
 }
 
 // 在创建的时候已经知道了如何于服务端交互
-func MakeClerk(servers []*rpc.Client) *Clerk {
+func MakeClerk(servers []*rpc.Client, IsOk *[]int32) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.serversIsOk = IsOk
 
 	ck.leader = mrand.Intn(len(servers))	// 随机选择一个起始值 生成(0,len(server)-1)的随机数
 	ck.seq = 1
@@ -53,6 +56,12 @@ func (ck *Clerk) Get(key string) string {
 		reply := new(GetReply)
 
 		ck.leader %= serverLength
+		// go中*和[]优先级不一样，要加个括号，挺扯的
+		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0{
+			ck.leader++
+			continue	// 不能连接就切换
+		}
+
 		replyArrival := make(chan bool, 1)
 		go func() {
 			err := ck.servers[ck.leader].Call("RaftKV.Get", args, reply)
@@ -91,6 +100,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		reply := new(PutAppendReply)
 
 		ck.leader %= cnt
+
+		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0{
+			ck.leader++
+			continue	// 不能连接就切换
+		}
+
 		replyArrival := make(chan bool, 1)
 		go func() {
 			err := ck.servers[ck.leader].Call("RaftKV.PutAppend", args, reply)
