@@ -85,6 +85,9 @@ const (
 	parser_port_error
 	time_out_entry_error
 	raft_maxraftstate_not_suitable
+	parser_snapshot_file_name
+	parser_raftstate_file_name
+	parser_persistence_strategy
 )
 
 func (err ErrorInParserConfig) Error() string {
@@ -107,6 +110,15 @@ func (err ErrorInParserConfig) Error() string {
 		break
 	case raft_maxraftstate_not_suitable:
 		ans = "raft maxraftstate not suitable, Less than zero or greater than 2MB."
+		break
+	case parser_snapshot_file_name:
+		ans = "Format error in parsing snapshot file."
+		break
+	case parser_raftstate_file_name:
+		ans = "Format error in parsing raftstate file."
+		break
+	case parser_persistence_strategy:
+		ans = "No such persistence strategy."
 		break
 	default:
 	}
@@ -144,26 +156,83 @@ func parserMyPort(MyPort string) bool {
 func ParserIP(address string) bool {
 	data := Str2sbyte(address)
 	var index int = -1
-	for i := len(data) - 1; i >= 0; i-- {	// 解析出最后一个‘:’
+	for i := len(data) - 1; i >= 0; i-- { // 解析出最后一个‘:’
 		if data[i] == ':' {
 			index = i
 			break
 		}
 	}
-	if index == -1 {	// 未解析出`:`
+	if index == -1 { // 未解析出`:`
 		return false
 	}
 
 	ip := data[:index]
-	port := data[index + 1:]
+	port := data[index+1:]
 
-	ParserRes := net.ParseIP(Sbyte2str(ip))	// 解析ip "localhost"无法被ParseIP解析
-	if ParserRes == nil && strings.ToLower(Sbyte2str(ip)) != "localhost"{	// 忽略大小写
+	ParserRes := net.ParseIP(Sbyte2str(ip))                                // 解析ip "localhost"无法被ParseIP解析
+	if ParserRes == nil && strings.ToLower(Sbyte2str(ip)) != "localhost" { // 忽略大小写
 		return false
 	}
 
-	if po, err := strconv.Atoi(Sbyte2str(port)); err != nil || po > 65536 || po < 0 {	// port解析失败或者范围错误
+	if po, err := strconv.Atoi(Sbyte2str(port)); err != nil || po > 65536 || po < 0 { // port解析失败或者范围错误
 		return false
+	}
+
+	return true
+}
+
+/*
+ * @brief: 解析从json提取出的文件名
+ * @return: 正确返回true；否则false,这里不区分各种错误类型
+ * @notes: 一下根据机器不同可以配置,Golang我没有找到接口可以直接获得以下值,所以手动配置
+ *	Linux下使用getconf PATH_MAX /usr 获取路径长度限制;4096
+ * 	getconf NAME_MAX /usr 获取文件名称长度限制;255
+ *	还有一点是我个人的要求,后缀必须是hdb,就是这么傲娇
+ */
+func ParserFileName(pathname string) bool {
+	Length := len(pathname)
+
+	if Length > 4096 {
+		return false
+	}
+
+	index1 := 0 // 标示后缀
+	index2 := 0 // 标示文件名
+
+	for i := Length - 1; i >= 0; i-- {
+		if pathname[i] == '.' {
+			index1 = i
+		} else if pathname[i] == '/' {
+			index2 = i
+			break
+		}
+	}
+	// 不存在后缀
+	if index1 == 0 {
+		return false
+	}
+
+	// 检查后缀
+	// a . h d b
+	// 0 1 2 3 4
+	if Length-index1 != 4 {
+		return false
+	} else { // 简单有效 不玩花的
+		if pathname[index1+1] != 'h' || pathname[index1+2] != 'd' || pathname[index1+3] != 'b' {
+			return false
+		}
+	}
+
+	// 检查文件名; 255见函数注释
+	if index1-index2-1 > 255 {
+		return false
+	}
+
+	// TODO 目前只检查了最后一个文件名,在这里检测格式是为了早点检测出错误,因为打开这个文件时协议已经开始,倒也可以使用默认文件
+	for i := index2 + 1; i < index1; i++ {
+		if !isEffective(pathname[i]){
+			return false
+		}
 	}
 
 	return true
@@ -186,4 +255,66 @@ func ReturnInterval(n int) int {
 	denominator := math.Log(temp) / math.Log(math.E)
 	res := molecular / denominator
 	return int(res * 1000)
+}
+
+/* TODO 表还需要再测测
+ * @brief: 对不齐就很烦,go Ctrl+Alt+L 会自动把注释后推
+ */
+var iseffective = [128]bool{
+	/*0   nul    soh    stx    etx    eot    enq    ack    bel     7*/
+	false, false, false, false, false, false, false, false,
+	/*8   bs     ht     nl     vt     np     cr     so     si     15*/
+	false, false, false, false, false, false, false, false,
+	/*16  dle    dc1    dc2    dc3    dc4    nak    syn    etb    23*/
+	false, false, false, false, false, false, false, false,
+	/*24  can    em     sub    esc    fs     gs     rs     us     31*/
+	false, false, false, false, false, false, false, false,
+	/*32  ' '    !      "      #     $     %     &     '          39*/
+	false, false, false, true, true, true, true, false,
+	/*40  (      )      *      +     ,     -     .     /          47*/
+	false, false, false, true, true, true, true, true,
+	/*48  0     1     2     3     4     5     6     7             55*/
+	true, true, true, true, true, true, true, true,
+	/*56  8     9     :     ;     <      =     >      ?           63*/
+	true, true, true, true, false, true, false, true,
+	/*64  @     A     B     C     D     E     F     G             71*/
+	true, true, true, true, true, true, true, true,
+	/*72  H     I     J     K     L     M     N     O             79*/
+	true, true, true, true, true, true, true, true,
+	/*80  P     Q     R     S     T     U     V     W             87*/
+	true, true, true, true, true, true, true, true,
+	/*88  X     Y     Z     [      \      ]      ^      _         95*/
+	true, true, true, false, false, false, false, true,
+	/*96  `      a     b     c     d     e     f     g           103*/
+	false, true, true, true, true, true, true, true,
+	/*104 h     i     j     k     l     m     n     o            113*/
+	true, true, true, true, true, true, true, true,
+	/*112 p     q     r     s     t     u     v     w            119*/
+	true, true, true, true, true, true, true, true,
+	/*120 x     y     z     {      |      }      ~      del      127*/
+	true, true, true, false, false, false, false, false,
+}
+
+/*
+ * @brief: 判断文件名是否出现错误
+ */
+func isEffective(ch byte) bool {
+	if ch < 0 { //|| ch > 127{ 	显然不太可能
+		return false
+	} else {
+		return iseffective[ch]
+	}
+}
+
+/*
+ * @brief: 解析文件中的持久化策略是否正确,目前只有三种有效的策略
+ */
+func checkPersistenceStrategy(strategy string) bool{
+	lower := strings.ToLower(strategy)
+
+	if lower != "everysec" && lower != "no" && lower != "always"{
+		return false
+	}
+
+	return true
 }

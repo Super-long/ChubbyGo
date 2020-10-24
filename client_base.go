@@ -14,20 +14,26 @@ import (
  */
 
 func main(){
-	n := 10
+	n := 1
 	Sem := make(Connect.Semaphore, n)
 	SemNumber := 0
 	clientConfigs := make([]*Connect.ClientConfig,n)
+	flags := make([]bool, n)
 	for i := 0; i < n; i++ {
 		clientConfigs[i] = Connect.CreateClient()
 		err := clientConfigs[i].StartClient()
 		if err != nil {
 			log.Println(err.Error())
+		} else {	// 显然连接成功以后才可以
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*4))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			flags[i] = true
 		}
-		clientConfigs[i].SetUniqueFlake(uint64(i+n*5))	// 想多次重试OK就每次把这里的0每次递增1就ok
 	}
 
 	for i := 0; i < n; i++{
+		if !flags[i]{
+			continue
+		}
 		SemNumber++
 		go func(cliID int){
 			defer Sem.P(1)
@@ -46,6 +52,10 @@ func main(){
 	}
 
 	Sem.V(SemNumber)
-
-	fmt.Println("PASS!")
+	for i:=0 ;i < len(flags);i++{
+		if flags[i]{	// 至少一台服务器连接成功并执行完才算是PASS
+			fmt.Println("PASS!")
+			return
+		}
+	}
 }

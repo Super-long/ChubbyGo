@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,11 +25,16 @@ type ServerConfig struct {
 	persister *Persister.Persister // 持久化实体
 	mu        sync.Mutex           // 用于保护本结构体的变量
 	// 不设置成大写没办法从配置文件中读出来
-	MaxRaftState   int      `json:"maxraftstate"`    // raft层日志压缩上限
-	Maxreries      int      `json:"maxreries"`       // 超时重连最大数
-	ServersAddress []string `json:"servers_address"` // 读取配置文件中的其他服务器地址
-	MyPort         string   `json:"myport"`          // 自己的端口号
-	TimeOutEntry   int      `json:"timeout_entry"`   // connectAll中定义的重传超时间隔 单位为毫秒
+	MaxRaftState   int      	`json:"maxraftstate"`    	// raft层日志压缩上限
+	Maxreries      int      	`json:"maxreries"`       	// 超时重连最大数
+	ServersAddress []string 	`json:"servers_address"` 	// 读取配置文件中的其他服务器地址
+	MyPort         string   	`json:"myport"`          	// 自己的端口号
+	TimeOutEntry   int      	`json:"timeout_entry"`   	// connectAll中定义的重传超时间隔 单位为毫秒
+	// 这三个要在解析完以后传给persister
+	// 后缀hdb全称为 "Honeycomb Database Backup file" 蜂巢数据备份文件
+	SnapshotFileName	string	`json:"snapshotfilename"`	// 快照的持久化文件名
+	RaftstateFileName	string	`json:"raftstatefilename"`	// raft状态的持久化名
+	PersistenceStrategy string	`json:"persistencestrategy"`// 对应着三条策略 见persister.go 注意配置文件中不能拼写错误
 }
 
 /*
@@ -68,7 +74,7 @@ func (cfg *ServerConfig) connectAll() error {
 						if atomic.LoadInt32(&HTTPError) > 0 {
 							return
 						}
-						log.Printf("%s : Reconnecting for the %d time\n", cfg.ServersAddress[index], number+1)
+						log.Printf("INFO : %s : Reconnecting for the %d time\n", cfg.ServersAddress[index], number+1)
 						number++
 						Timeout = Timeout * 2
 						time.Sleep(time.Duration(Timeout) * time.Millisecond) // 倍增重连时长
@@ -192,6 +198,21 @@ func (cfg *ServerConfig) checkJsonParser() error {
 		return ErrorInParserConfig(raft_maxraftstate_not_suitable)
 	}
 
+	// 解析SnapshotFileName是否符合规范
+	if !ParserFileName(cfg.SnapshotFileName){
+		return ErrorInParserConfig(parser_snapshot_file_name)
+	}
+
+	// 解析RaftstateFileName是否符合规范
+	if !ParserFileName(cfg.RaftstateFileName){
+		return ErrorInParserConfig(parser_raftstate_file_name)
+	}
+
+	// 解析RaftstateFileName是否符合规范
+	if !checkPersistenceStrategy(cfg.PersistenceStrategy){
+		return ErrorInParserConfig(parser_persistence_strategy)
+	}
+
 	return nil
 }
 
@@ -215,6 +236,9 @@ func (cfg *ServerConfig) StartServer() error {
 			return ErrorInStartServer(parser_error)
 		}
 
+		// 填充cfg.Persister
+		cfg.fillPersister()
+
 	} else {
 		log.Println("ServerListeners Error!")
 		// 这种情况只有在调用服务没有启动read_server_config.go的init函数时会出现
@@ -231,7 +255,7 @@ func (cfg *ServerConfig) StartServer() error {
 		return ErrorInStartServer(connect_error)
 	}
 	cfg.kvserver.StartKVServer(cfg.peers) // 启动服务
-	log.Printf("INFO %s : 连接成功 且服务以启动成功 \n", cfg.MyPort)
+	log.Printf("INFO %s : 连接成功 且服务已启动成功 \n", cfg.MyPort)
 	return nil
 }
 
@@ -264,3 +288,23 @@ func RegisterRestServerListener(l ServerListener) {
 }
 
 // --------------------------
+
+/*
+ * @brief: 把从json中解出的SnapshotFileName,RaftstateFileName,PersistenceStrategy三项填充到Persister
+ * @notes: 这个函数建立在已执行完checkJsonParser之后，也就是其中的值应该都满足我们的要求
+ */
+func (cfg *ServerConfig) fillPersister(){
+	cfg.persister.RaftstateFileName = cfg.RaftstateFileName
+	cfg.persister.SnapshotFileName = cfg.SnapshotFileName
+
+	// 配置文件中策略这一项忽略大小写
+	LowerStrategy := strings.ToLower(cfg.PersistenceStrategy)
+
+	if LowerStrategy == "everysec" {
+		cfg.persister.PersistenceStrategy = Persister.Everysec
+	} else if LowerStrategy == "no" {
+		cfg.persister.PersistenceStrategy = Persister.No
+	} else {
+		cfg.persister.PersistenceStrategy = Persister.Always
+	}
+}

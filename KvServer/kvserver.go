@@ -5,7 +5,6 @@ import (
 	"HummingbirdDS/Raft"
 	"bytes"
 	"encoding/gob"
-	"fmt"
 	"log"
 	"net/rpc"
 	"sync"
@@ -88,8 +87,6 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 		return nil
 	}
 
-	DPrintf("[%d]: leader %d receive rpc: Get(%q).\n", kv.me, kv.me, args.Key)
-
 	kv.mu.Lock()
 	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		if args.SeqNo <= dup.Seq {
@@ -101,6 +98,9 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 	}
 
 	NewOperation := Op{Key: args.Key, Op: "Get", ClientID: args.ClientID, Clientseq: args.SeqNo}
+
+	log.Printf("INFO : ClientId[%d], GET:key(%s)\n", args.ClientID,args.Key)
+
 	index, term, _ := kv.rf.Start(NewOperation)
 
 	Notice := make(chan struct{})
@@ -129,7 +129,6 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:
 	}
-	log.Printf("INFO : %d, GET:key(%s)\n", args.ClientID,args.Key)
 	return nil
 }
 
@@ -145,9 +144,6 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 		return nil
 	}
 
-	DPrintf("[%d]: leader %d receive rpc: PutAppend(%q => (%q,%q), (%d-%d).\n", kv.me, kv.me,
-		args.Op, args.Key, args.Value, args.ClientID, args.SeqNo)
-
 	kv.mu.Lock()
 	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		//log.Printf("DEBUG : args.SeqNo : %d , dup.Seq : %d\n", args.SeqNo, dup.Seq)
@@ -160,6 +156,9 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// 新请求
 	NewOperation := Op{Key: args.Key, Value: args.Value, Op: args.Op, ClientID: args.ClientID, Clientseq: args.SeqNo}
+
+	log.Printf("INFO : ClientId[%d], PUTAPPEND:key(%s),value(%s)\n", args.ClientID,args.Key, args.Value)
+
 	index, term, _ := kv.rf.Start(NewOperation)
 	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
 
@@ -179,7 +178,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	case <-kv.shutdownCh:
 		return nil
 	}
-	log.Printf("INFO : %s, PUTAPPEND:key(%s),value(%s)\n", args.ClientID,args.Key, args.Value)
+
 	return nil
 }
 
@@ -206,7 +205,7 @@ func (kv *RaftKV) applyDaemon() {
 					continue
 				}
 				if msg.Command == nil {
-					fmt.Println("msg.Command is null")
+					log.Println("ERROR : msg.Command is null.")
 				}
 				if msg.Command != nil && msg.Index > kv.snapshotIndex {
 					cmd := msg.Command.(Op)
@@ -235,7 +234,8 @@ func (kv *RaftKV) applyDaemon() {
 								kv.me, kv.me, msg.Index, cmd, cmd.ClientID, dup.Seq, cmd.Clientseq)
 						}
 					}else {
-						log.Println("WARNING : Multiple clients have the same ID !")
+						// 这种情况会在多个客户端使用相同ClientID时出现
+						log.Println("ERROR : Multiple clients have the same ID !")
 						// log.Printf("错误情况 dup.Seq %d ; cmd.Clientseq %d\n", dup.Seq , cmd.Clientseq)
 					}
 					// msg.IsSnapshot && kv.isUpperThanMaxraftstate()

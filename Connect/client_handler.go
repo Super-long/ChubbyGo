@@ -178,6 +178,10 @@ func (cfg *ClientConfig) connectAll() error {
 	}
 }
 
+/*
+ * @brief: 用于判断此时已经重连Maxreries的协程数，在超过阈值的时候直接退出，error为超时
+ * @return: 返回数组中true的个数
+ */
 func judgeTrueNumber(array []bool) int32 {
 	arrayLength := len(array)
 	var res int32 = 0
@@ -231,7 +235,8 @@ func (cfg *ClientConfig) StartClient() error {
  * @return: 解析正确返回true,错误为false
  */
 func (cfg *ClientConfig) checkJsonParser() error {
-	// 当配置数小于7的时候，留给其他服务器启动的时间太少，配置为8的时候，至少已经过了51秒了(2^9-2^1)
+	// 当配置数小于7的时候，留给其他服务器启动的时间太少，只有八秒左右的时间
+	// 这个值同样定义了客户端连接超时时间
 	if cfg.Maxreries <= 7 {
 		return ErrorInParserConfig(maxreries_to_small)
 	}

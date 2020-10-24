@@ -116,17 +116,14 @@ func (rf *Raft) lastLogIndexAndTerm() (int, int) {
 	return index, term
 }
 
-
-//
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-//
+/*
+ * @brief: 用于持久化需要的数据
+ */
 func (rf *Raft) persist() {
-	// Your code here (2C).
 	w := new(bytes.Buffer)
 	e := gob.NewEncoder(w)
 
+	// 该实现为流中的每个数据类型编译自定义编解码器，当使用单个编码器传输一个值流时效率最高，分摊编译成本。
 	e.Encode(rf.CurrentTerm)
 	e.Encode(rf.VotedFor)
 	e.Encode(rf.Logs)
@@ -137,9 +134,9 @@ func (rf *Raft) persist() {
 	rf.persister.SaveRaftState(data)
 }
 
-//
-// restore previously persisted state.
-//
+/*
+ * @brief: 读取持久化的数据
+ */
 func (rf *Raft) readPersist(data []byte) {
 	// Your code here (2C).
 	if data == nil || len(data) < 1 { // bootstrap without any state?
@@ -232,7 +229,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 				rf.VotedFor = args.CandidateID
 				reply.VoteGranted = true
 
-				DPrintf("[%d]: peer %d vote to peer %d (last log idx: %d->%d, term: %d->%d)\n",
+				log.Printf("INFO : [%d]: peer %d vote to peer %d (last log idx: %d->%d, term: %d->%d)\n",
 					rf.me, rf.me, args.CandidateID, args.LastLogIndex, lastLogIdx, args.LastLogTerm, lastLogTerm)
 			}
 		}
@@ -248,6 +245,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		log.Println("INFO : ", err.Error())
 		flag = false
 	} else if !reply.IsOk{
+		// 正常情况 出现在服务器集群还未全部启动之前
 		log.Println("INFO : The server is not connected to other servers in the cluster.")
 		flag = false
 	}
@@ -427,14 +425,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		term = rf.CurrentTerm
 		isLeader = true
 
-		DPrintf("[%d]: client add new entry (%d-%v)\n", rf.me, index, command)
-
 		// 只是更新自己而已
 		rf.nextIndex[rf.meIndex] = index + 1
 		rf.matchIndex[rf.meIndex] = index
 
 		rf.persist()
 	}
+	// log.Printf("INFO : [%d] client add a new entry (index:%d-command%v)\n", rf.me, index, command)
 
 	return index, term, isLeader
 }
@@ -464,7 +461,7 @@ func (rf *Raft) consistencyCheckReplyHandler(n int, reply *AppendEntriesReply) {
 			rf.turnToFollow()
 			rf.persist()
 			rf.resetTimer <- struct{}{}
-			DPrintf("[%d]: leader %d found new term (heartbeat resp from peer %d), turn to follower.",
+			log.Printf("INFO : [%d]->leader %d found new term (heartbeat resp from peer %d), turn to follower.",
 				rf.me, rf.me, n)
 			return
 		}
@@ -664,6 +661,7 @@ func (rf *Raft) canvassVotes() {
 			if reply.CurrentTerm > voteArgs.Term {
 				rf.CurrentTerm = reply.CurrentTerm
 				rf.turnToFollow()
+				log.Printf("INFO : [%d] become new follower! \n", rf.me)
 				rf.persist()
 				rf.resetTimer <- struct{}{} // reset timer
 				return
@@ -674,9 +672,9 @@ func (rf *Raft) canvassVotes() {
 				// log.Printf("DEBUG : Term : %d ; votes : %d ; expected : %d\n",rf.CurrentTerm,votes, (peers+1)/2 + 1)
 				if votes == (peers+1)/2 + 1 {	// peers比实际机器数少1，不计算自己
 					rf.state = Leader
+					log.Printf("INFO : [%d] become new leader! \n", rf.me)
 					rf.resetOnElection()    // 重置leader状态
 					go rf.heartbeatDaemon() // 选举成功以后 执行心跳协程
-					DPrintf("[%d]: peer %d become new leader.\n", rf.me, rf.me)
 					return
 				}
 				// votes++
@@ -777,7 +775,7 @@ func MakeRaftInit(me uint64,
 	rf.commitCond = sync.NewCond(&rf.mu)         // commitCh, a distinct goroutine
 	rf.heartbeatInterval = time.Millisecond * 50 // small enough, not too small
 
-	// initialize from state persisted before a crash
+	// TODO 需要从文件读一手
 	rf.readPersist(persister.ReadRaftState())
 
 	rf.lastApplied = rf.snapshotIndex
@@ -905,7 +903,7 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	err := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	flag := true
 	if err != nil{
-		log.Println("INFO : ", err.Error())
+		log.Println("INFO :", err.Error())
 		flag = false
 	} else if !reply.IsOk{
 		log.Println("INFO : The server is not connected to other servers in the cluster.")
