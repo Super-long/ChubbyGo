@@ -36,7 +36,7 @@ func MakeClerk(servers []*rpc.Client, IsOk *[]int32) *Clerk {
 
 	ck.leader = mrand.Intn(len(servers)) // 随机选择一个起始值 生成(0,len(server)-1)的随机数
 	ck.seq = 1
-	ck.ClientID = Flake.GenSonyflake()
+	ck.ClientID = Flake.GetSonyflake()
 
 	DPrintf("Clerk: %d\n", ck.ClientID)
 

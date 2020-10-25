@@ -269,7 +269,7 @@ func CreatServer(nservers int) *ServerConfig {
 	cfg.nservers = nservers
 	cfg.MaxRaftState = 0
 	cfg.peers = make([]*rpc.Client, cfg.nservers-1) // 存储了自己以外的其他服务器的RPC封装
-	cfg.me = Flake.GenSonyflake()                   // 全局ID需要传给raft层
+	cfg.me = Flake.GetSonyflake()                   // 全局ID需要传给raft层
 	cfg.persister = Persister.MakePersister()
 
 	return cfg

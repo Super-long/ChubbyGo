@@ -10,7 +10,8 @@ import (
 
 /*
  * TODO 目前来说这个测试函数是有问题的，集群启动以后的只有第一次执行是ok的，除非每次重设clientID(全局唯一ID)
- *      因为上一次的值还在服务器中，但是第二次重启的客户端中clientID和上次一样，但seq却为0，所以会出现很多的重复值
+ *      因为上一次的值还在服务器中，但是第二次重启的客户端中clientID和上次一样，但seq却为0，所以会出现很多的重复值。
+ *		目前并没有什么好的解决方案，因为这是flake算法的局限，暂时不想为测试文件重改flake
  */
 
 func main(){
@@ -25,7 +26,7 @@ func main(){
 		if err != nil {
 			log.Println(err.Error())
 		} else {	// 显然连接成功以后才可以
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*5))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*0))	// 想多次重试OK就每次把这里的0每次递增1就ok
 			flags[i] = true
 		}
 	}
