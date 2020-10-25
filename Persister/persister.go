@@ -10,9 +10,9 @@ import (
 
 // 模仿redis AOF的命名,其实总体来看更像是RDB
 const (
-	Always   = iota // 每条操作都进行刷盘 TODO 目前并不太好实现
+	Always   = iota // 每条操作都进行刷盘,这样看来就不需要守护进程了
 	Everysec        // 每秒进行一次刷盘,把raftstate和snapshot分别存到不同的文件中
-	No              // 不主动刷盘,也就隐含着我们不需要启动守护协程
+	No              // 不主动刷盘
 )
 
 type Persister struct {
@@ -43,6 +43,11 @@ func (ps *Persister) SaveRaftState(state []byte) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.raftstate = state
+
+	// 策略为always时意味着每一个操作都会入盘
+	if ps.PersistenceStrategy == Always {
+		WriteContentToFile(ps.raftstate, ps.RaftstateFileName, ps.PersistenceStrategy)
+	}
 }
 
 func (ps *Persister) ReadRaftState() []byte {
@@ -83,6 +88,11 @@ func (ps *Persister) SaveSnapshot(snapshot []byte) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.snapshot = snapshot
+
+	// 策略为always时意味着每一个操作都会入盘
+	if ps.PersistenceStrategy == Always {
+		WriteContentToFile(ps.snapshot, ps.SnapshotFileName, ps.PersistenceStrategy)
+	}
 }
 
 func (ps *Persister) ReadSnapshot() []byte {
@@ -140,7 +150,7 @@ func WriteContentToFile(vals []byte, outfile string, strategy int) error {
 	}
 
 	// 将调用fsync进行刷盘
-	if strategy == Everysec {
+	if strategy == Everysec || strategy == Always {
 		file.Sync()
 	}
 

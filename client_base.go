@@ -26,7 +26,7 @@ func main(){
 		if err != nil {
 			log.Println(err.Error())
 		} else {	// 显然连接成功以后才可以
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*0))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*2))	// 想多次重试OK就每次把这里的0每次递增1就ok
 			flags[i] = true
 		}
 	}
