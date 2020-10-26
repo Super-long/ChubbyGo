@@ -78,6 +78,9 @@ type Raft struct {
 	shutdownCh chan struct{}
 
 	ConnectIsok *int32 // 参考RaftKV中的解释
+
+	peersIsConnect []int32 		// 用于判断对端是否还在连接成功,操作时采用原子操作
+	serversAddress *[]string	// 存储对端的地址信息,用于断线时自动重连
 }
 
 func max(a, b int) int {
@@ -208,7 +211,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 			// 这条日志帮助我找到一个bug,就是如果选举不加以限制,一个分区的节点可能会Term会飙升,但但因为日志不够无法称为leader
 			// 此时就会导致现任leader不停的被挤掉,因为那个节点的Term很高,就会进入这条语句而不会得到选票
 			log.Printf("INFO : [%d] turn to follower, CurrentTerm(%d), peer %d Term(%d).\n",
-				rf.me,rf.CurrentTerm ,args.CandidateID, args.Term)
+				rf.me, rf.CurrentTerm, args.CandidateID, args.Term)
 			// 进入新Term，把票投出去
 			rf.CurrentTerm = args.Term
 			rf.state = Follower
@@ -237,18 +240,63 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) erro
 	return nil
 }
 
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	err := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	flag := true
-	if err != nil {
-		//log.Println("INFO : ", err.Error())
-		flag = false
-	} else if !reply.IsOk {
-		// 正常情况 出现在服务器集群还未全部启动之前
-		log.Println("INFO : The server is not connected to other servers in the cluster.")
-		flag = false
+func (rf *Raft) tryToReconnect(index int) {
+	// 先设置为断线状态 此时本端所有对此peers的RPC会失败, 可能两个RPC同时进入tryConnect,不能简单的原子累加
+	if !atomic.CompareAndSwapInt32(&rf.peersIsConnect[index], 0 , 1){
+		return // 证明已经有其他协程进行重连了
 	}
-	return flag
+
+	for {
+		// 显然重传需要对端地址
+		TempClient, err := rpc.DialHTTP("tcp", (*rf.serversAddress)[index])
+		if err == nil{	// 重连成功
+			rf.peers[index] = TempClient	// 重新设置peers,与下面的顺序不能反,执行到这里时peersIsConnect[index]只可能是1
+
+			if atomic.LoadInt32(&rf.peersIsConnect[index]) == 0{
+				log.Printf("CRITICAL : In tryToConnect resourse is zero!")
+			}
+
+			// 至此其他RPC协程也能够正常运行了
+			atomic.CompareAndSwapInt32(&rf.peersIsConnect[index], 1 , 0)
+
+			break
+		}else {
+			time.Sleep(1 * time.Second)	// 每一秒进行一次重连
+		}
+	}
+}
+
+/*
+ * @brief: 在检测到连接失败的时候启动一个goRoutinue去进行重连
+ * @params: 此次要进行通信的实体的下标,RPC对象的入参和返回值
+ * @ret: 此次通信是否成功。要启动goRoutinue则证明失败了
+ */
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	var err error
+	res := true
+
+	if atomic.LoadInt32(&rf.peersIsConnect[server]) == 0 { // 连接成功的时候进行调用
+		err = rf.peers[server].Call("Raft.RequestVote", args, reply)
+
+		if err != nil {
+			//log.Println("INFO : ", err.Error())
+			log.Printf("WARNING : %d is leader, Failed to connect with peers(%d). Try to connect.\n", rf.me, server)
+			// 启动一个协程进行重连
+			go rf.tryToReconnect(server)
+
+			res = false
+		} else if !reply.IsOk {
+			// 正常情况 出现在服务器集群还未全部启动之前
+			log.Println("INFO : The server is not connected to other servers in the cluster.")
+			res = false
+		}
+
+	} else {
+		return false // 连接还未成功
+	}
+
+	// 连接成功且没有出现IsOk为false时出现返回true
+	return res
 }
 
 // 同步日志，日志项为空时可当做心跳包
@@ -291,7 +339,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.IsOk = true
 
 	// 太频繁了 不查错的时候不打印
-	log.Printf("INFO : rpc -> [%d] accept AppendEntries sucess, from peer: %d, term: %d\n", rf.me, args.LeaderID, args.Term)
+	// log.Printf("INFO : rpc -> [%d] accept AppendEntries sucess, from peer: %d, term: %d\n", rf.me, args.LeaderID, args.Term)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -401,17 +449,31 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	err := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	flag := true
-	if err != nil {
-		// 出现服务器宕机的时候打印的太过频繁了
-		log.Println("INFO : ", err.Error())
-		flag = false
-	} else if !reply.IsOk {
-		log.Println("INFO : The server is not connected to other servers in the cluster.")
-		flag = false
+	var err error
+	res := true
+
+	if atomic.LoadInt32(&rf.peersIsConnect[server]) == 0 { // 连接成功的时候进行调用
+		err = rf.peers[server].Call("Raft.AppendEntries", args, reply)
+
+		if err != nil {
+			//log.Println("INFO : ", err.Error())
+			log.Printf("WARNING : %d is leader, Failed to connect with peers(%d). Try to connect.\n", rf.me, server)
+			// 启动一个协程进行重连
+			go rf.tryToReconnect(server)
+
+			res = false
+		} else if !reply.IsOk {
+			// 正常情况 出现在服务器集群还未全部启动之前
+			log.Println("INFO : The server is not connected to other servers in the cluster.")
+			res = false
+		}
+
+	} else {
+		return false // 重新连接还未成功
 	}
-	return flag
+
+	// 连接成功且没有出现IsOk为false时出现返回true
+	return res
 }
 
 /*
@@ -573,7 +635,7 @@ func (rf *Raft) heartbeatDaemon() {
 				go rf.consistencyCheck(i)
 			}
 		}
-		fmt.Printf("DEBUG : leader已经发送完一轮心跳包， sleep heartbeatInterval, 然后就会重置选举超时\n")
+		// fmt.Printf("DEBUG : leader已经发送完一轮心跳包， sleep heartbeatInterval, 然后就会重置选举超时\n")
 		// 因为心跳就需要这么长时间一次，也不会被其他事情打断，所以直接sleep就ok，不需要用定时器，代码还简单
 		time.Sleep(rf.heartbeatInterval)
 	}
@@ -750,6 +812,8 @@ func (rf *Raft) MakeRaftServer(peers []*rpc.Client) {
 	peerLength := len(peers)
 	rf.nextIndex = make([]int, peerLength+1)
 	rf.matchIndex = make([]int, peerLength+1)
+	rf.peersIsConnect = make([]int32, peerLength) // 只需要与其他端通信,所以不必加1
+
 	// 对于每一个服务器来说前peerLength项都是与其他服务器的通信实体，index为peerLength的即是自己
 	rf.meIndex = peerLength
 
@@ -769,7 +833,7 @@ func (rf *Raft) MakeRaftServer(peers []*rpc.Client) {
  * @brief: 用于创建一个raft实体
  */
 func MakeRaftInit(me uint64,
-	persister *Persister.Persister, applyCh chan ApplyMsg, IsOk *int32) *Raft {
+	persister *Persister.Persister, applyCh chan ApplyMsg, IsOk *int32, address *[]string) *Raft {
 	rf := &Raft{}
 	rf.persister = persister
 	rf.me = me
@@ -788,8 +852,8 @@ func MakeRaftInit(me uint64,
 
 	rf.electionTimer = time.NewTimer(rf.electionTimeout)
 	rf.resetTimer = make(chan struct{})
-	rf.shutdownCh = make(chan struct{})                                       	// shutdown raft gracefully
-	rf.commitCond = sync.NewCond(&rf.mu)                                      	// commitCh, a distinct goroutine
+	rf.shutdownCh = make(chan struct{})                                       // shutdown raft gracefully
+	rf.commitCond = sync.NewCond(&rf.mu)                                      // commitCh, a distinct goroutine
 	rf.heartbeatInterval = time.Millisecond * time.Duration(50+rand.Intn(50)) // small enough, not too small
 
 	rf.readPersist(persister.ReadRaftStateFromFile())
@@ -798,6 +862,7 @@ func MakeRaftInit(me uint64,
 	rf.commitIndex = rf.snapshotIndex
 
 	rf.ConnectIsok = IsOk
+	rf.serversAddress = address	// 这其实是从config读出的对端地址信息,与peers下标一一对应,用于断线重连
 
 	return rf
 }
@@ -916,16 +981,31 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
-	err := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
-	flag := true
-	if err != nil {
-		//log.Println("INFO :", err.Error())
-		flag = false
-	} else if !reply.IsOk {
-		log.Println("INFO : The server is not connected to other servers in the cluster.")
-		flag = false
+	var err error
+	res := true
+
+	if atomic.LoadInt32(&rf.peersIsConnect[server]) == 0 { // 连接成功的时候进行调用
+		err = rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
+
+		if err != nil {
+			//log.Println("INFO : ", err.Error())
+			log.Printf("WARNING : %d is leader, Failed to connect with peers(%d). Try to connect.\n", rf.me, server)
+			// 启动一个协程进行重连
+			go rf.tryToReconnect(server)
+
+			res = false
+		} else if !reply.IsOk {
+			// 正常情况 出现在服务器集群还未全部启动之前
+			log.Println("INFO : The server is not connected to other servers in the cluster.")
+			res = false
+		}
+
+	} else {
+		return false // 连接还未成功
 	}
-	return flag
+
+	// 连接成功且没有出现IsOk为false时出现返回true
+	return res
 }
 
 /*

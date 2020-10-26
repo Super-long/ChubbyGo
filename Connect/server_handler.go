@@ -247,7 +247,7 @@ func (cfg *ServerConfig) StartServer() error {
 
 	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
 	cfg.kvserver = KvServer.StartKVServerInit(cfg.me, cfg.persister, cfg.MaxRaftState)
-	cfg.kvserver.StartRaftServer()
+	cfg.kvserver.StartRaftServer(&cfg.ServersAddress)
 
 	cfg.serverRegisterFun()
 	if err := cfg.connectAll(); err != nil {

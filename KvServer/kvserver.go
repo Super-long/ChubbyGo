@@ -345,6 +345,6 @@ func (kv *RaftKV)StartKVServer(servers []*rpc.Client){
 	go kv.applyDaemon()
 }
 
-func (kv *RaftKV) StartRaftServer(){
-	kv.rf = Raft.MakeRaftInit(kv.me, kv.persist, kv.applyCh, kv.ConnectIsok)
+func (kv *RaftKV) StartRaftServer(address *[]string){
+	kv.rf = Raft.MakeRaftInit(kv.me, kv.persist, kv.applyCh, kv.ConnectIsok, address)
 }
