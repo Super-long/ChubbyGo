@@ -15,7 +15,7 @@ import (
  */
 
 func main(){
-	n := 1
+	n := 10
 	Sem := make(Connect.Semaphore, n)
 	SemNumber := 0
 	clientConfigs := make([]*Connect.ClientConfig,n)

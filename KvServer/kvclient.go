@@ -38,7 +38,7 @@ func MakeClerk(servers []*rpc.Client, IsOk *[]int32) *Clerk {
 	ck.seq = 1
 	ck.ClientID = Flake.GetSonyflake()
 
-	DPrintf("Clerk: %d\n", ck.ClientID)
+	log.Printf("INFO : Creat a new clerk(%d).\n", ck.ClientID)
 
 	return ck
 }
@@ -47,7 +47,8 @@ func MakeClerk(servers []*rpc.Client, IsOk *[]int32) *Clerk {
  * @brief: 因为为了保证强一致性，一个客户端一次只会跑一个操作
  */
 func (ck *Clerk) Get(key string) string {
-	DPrintf("Clerk: Get: %q\n", key)
+	// log.Printf("INFO : Clerk Get: %s\n", key)
+
 	serverLength := len(ck.servers)
 	for {
 		args := &GetArgs{Key: key, ClientID: ck.ClientID, SeqNo: ck.seq}
@@ -74,7 +75,7 @@ func (ck *Clerk) Get(key string) string {
 		case ok := <-replyArrival:
 			if ok {
 				if reply.Err == OK || reply.Err == ErrNoKey || reply.Err == Duplicate {
-					log.Println(ck.ClientID,  reply.Err, reply.Value)
+					log.Println(ck.ClientID, reply.Err, reply.Value)
 					ck.seq++
 					return reply.Value
 				} else if reply.Err == ReElection || reply.Err == NoLeader { // 这两种情况我们需要重新发送请求 即重新选择主
@@ -91,7 +92,7 @@ func (ck *Clerk) Get(key string) string {
 }
 
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	DPrintf("Clerk: PutAppend: %q => (%q,%q) from: %d\n", op, key, value, ck.ClientID)
+	// log.Printf("INFO : Clerk(%d) operation(%s): key(%s),value(%s)\n", ck.ClientID, op, key, value)
 
 	cnt := len(ck.servers)
 	for {

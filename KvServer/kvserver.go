@@ -11,15 +11,6 @@ import (
 	"sync/atomic"
 )
 
-const Debug = 0
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug > 0 {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 type Op struct {
 	Key      string
 	Value    string
@@ -73,6 +64,7 @@ func (kv *RaftKV) GetRaft() *Raft.Raft{
 	return kv.rf
 }
 
+// 显然对于同一个客户端不允许并发执行多个操作,会发生死锁,这是我定义的使用规范
 func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 	// kvraft的这个也可能被触发，用于客户端连接上三个服务器，但其中一台服务器还没有连接到全部的别的服务器，此时对于这个服务器来说应该拒绝请求
 	// 客户端只需要切换leader就ok了
@@ -184,13 +176,13 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 /*
  * @brief: 为了从raft接收数据，负责把从applyCh中接收到的命令转化成数据库中的值
- × 并在接收到命令的同时通知请求上的channel用于向客户返回数据
+ * 并在接收到命令的同时通知请求上的channel用于向客户返回数据
 */
-func (kv *RaftKV) applyDaemon() {
+func (kv *RaftKV) acceptFromRaftDaemon() {
 	for {
 		select {
 		case <-kv.shutdownCh:
-			DPrintf("[%d]: server %d is shutting down.\n", kv.me, kv.me)
+			log.Printf("INFO : [%d] is shutting down actively.\n", kv.me)
 			return
 		case msg, ok := <-kv.applyCh:
 			if ok {
@@ -205,7 +197,7 @@ func (kv *RaftKV) applyDaemon() {
 					continue
 				}
 				if msg.Command == nil {
-					log.Println("ERROR : msg.Command is null.")
+					log.Printf("ERROR : [%d] accept a package, msg.Command is null.\n", kv.me)
 				}
 				if msg.Command != nil && msg.Index > kv.snapshotIndex {
 					cmd := msg.Command.(Op)
@@ -226,13 +218,13 @@ func (kv *RaftKV) applyDaemon() {
 							kv.KvDictionary[cmd.Key] += cmd.Value
 							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
 						default:
-							DPrintf("[%d]: server %d receive invalid cmd: %v\n", kv.me, kv.me, cmd)
-							panic("invalid command operation")
+							log.Printf("ERROR : [%d] receive a invalid cmd %v.\n", kv.me, cmd)
 						}
-						if ok {
-							DPrintf("[%d]: server %d apply index: %d, cmd: %v (client: %d, dup seq: %d < %d)\n",
-								kv.me, kv.me, msg.Index, cmd, cmd.ClientID, dup.Seq, cmd.Clientseq)
-						}
+						// 调试时打印这个消息
+/*						if ok {
+							log.Printf("INFO : [%d] accept a operation. index(%d), cmd(%s), client(%d), oldSeq(%d)->newSeq(%d)\n",
+								kv.me, msg.Index, cmd.Op, cmd.ClientID, dup.Seq, cmd.Clientseq)
+						}*/
 					}else {
 						// 这种情况会在多个客户端使用相同ClientID时出现
 						log.Println("ERROR : Multiple clients have the same ID !")
@@ -240,10 +232,10 @@ func (kv *RaftKV) applyDaemon() {
 					}
 					// msg.IsSnapshot && kv.isUpperThanMaxraftstate()
 					if kv.isUpperThanMaxraftstate() {
-						DPrintf("[%d]: server %d need generate snapshot @ %d (%d vs %d), client: %d.\n",
-							kv.me, kv.me, msg.Index, kv.maxraftstate, kv.persist.RaftStateSize(), cmd.ClientID)
+						log.Printf("INFO : [%d] need create a snapshot. maxraftstate(%d), nowRaftStateSize(%d), clientID(%d).\n",
+							kv.me, kv.maxraftstate, kv.persist.RaftStateSize(), cmd.ClientID)
 						kv.persisterSnapshot(msg.Index) 	// 此index以前的数据已经打包成快照了
-						// 需要解决死锁；10月2日已解决!
+						// 需要解决死锁；8月24日已解决!
 						kv.rf.CreateSnapshots(msg.Index)	// 使协议层进行快照
 					}
 
@@ -281,7 +273,7 @@ func (kv *RaftKV) persisterSnapshot(index int) {
 
 	kv.snapshotIndex = index
 
-	e.Encode(kv.KvDictionary)
+	e.Encode(kv.KvDictionary)	// 快照点以前的值已经被存到KvDictionary了
 	e.Encode(kv.snapshotIndex)
 	e.Encode(kv.ClientSeqCache)
 
@@ -330,19 +322,24 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 	var Isok int32 = 0	// 最大只能是1 因为只有在连接成功的时候会加一次
 	kv.ConnectIsok = &Isok
 
+	// 开始的时候读取快照
+	kv.readSnapshot(persister.ReadSnapshotFromFile())
+	// ps：很重要,因为从文件中读取的值只是字段，还没有存在persister中,只有存了以后才可以持久化成功,否则会出现宕机重启后snapshot.hdb为0
+	kv.persisterSnapshot(kv.snapshotIndex)
+
+	//log.Printf("DEBUG : [%d] snapshotIndex(%d), len(%d) .\n",kv.me ,kv.snapshotIndex, len(kv.ClientSeqCache))
+
 	return kv
 }
 
 func (kv *RaftKV)StartKVServer(servers []*rpc.Client){
-	// 开始的时候读取快照
-	kv.readSnapshot(kv.persist.ReadSnapshotFromFile())
 
 	atomic.AddInt32(kv.ConnectIsok, 1)	// 到这肯定已经连接上其他的服务器了
 
 	// 启动kv的服务
 	kv.rf.MakeRaftServer(servers)
 
-	go kv.applyDaemon()
+	go kv.acceptFromRaftDaemon()
 }
 
 func (kv *RaftKV) StartRaftServer(address *[]string){

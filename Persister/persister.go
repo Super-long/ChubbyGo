@@ -150,7 +150,7 @@ func WriteContentToFile(vals []byte, outfile string, strategy int) error {
 	}
 
 	// 将调用fsync进行刷盘
-	if strategy == Everysec || strategy == Always {
+	if strategy == Everysec { //|| strategy == Always {	修改为Always时不启动协程
 		file.Sync()
 	}
 
@@ -203,6 +203,7 @@ func PersisterDaemon(per *Persister) {
 			log.Println("WARNING : ", errRaftState.Error())
 		}
 		per.mu.Lock() // 保护per.snapshot
+		// log.Printf("DEBUG : snapshot length == %d\n", len(per.snapshot))	// 检查宕机重启后snapshot文件大小为0
 		errSnapshot := WriteContentToFile(per.snapshot, per.SnapshotFileName, per.PersistenceStrategy)
 		per.mu.Unlock()
 

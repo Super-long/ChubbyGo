@@ -240,7 +240,7 @@ func (cfg *ServerConfig) StartServer() error {
 		cfg.fillPersister()
 
 	} else {
-		log.Println("ServerListeners Error!")
+		log.Printf("ERROR : [%d] ServerListeners Error!\n", cfg.me)
 		// 这种情况只有在调用服务没有启动read_server_config.go的init函数时会出现
 		return ErrorInStartServer(Listener_error)
 	}
@@ -255,7 +255,7 @@ func (cfg *ServerConfig) StartServer() error {
 		return ErrorInStartServer(connect_error)
 	}
 	cfg.kvserver.StartKVServer(cfg.peers) // 启动服务
-	log.Printf("INFO %s : 连接成功 且服务已启动成功 \n", cfg.MyPort)
+	log.Printf("INFO : [%d] The connection is successful and the service has started successfully!\n", cfg.me)
 	return nil
 }
 

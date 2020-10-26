@@ -3,7 +3,7 @@
   "myport" : ":8900",
   "maxreries" : 13,
   "timeout_entry" : 200,
-  "maxraftstate" : 0,
+  "maxraftstate" : 7000,
   "snapshotfilename" : "Persister/snapshot3.hdb",
   "raftstatefilename" : "Persister/raftstate3.hdb",
   "persistencestrategy" : "everysec"

@@ -35,15 +35,6 @@ const (
 	Leader
 )
 
-var Debug = 0
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug > 0 {
-		log.Printf(format, a...)
-	}
-	return
-}
-
 type Raft struct {
 	mu        sync.Mutex           // Lock to protect shared access to this peer's state
 	peers     []*rpc.Client        // RPC end points of all peers
@@ -255,8 +246,8 @@ func (rf *Raft) tryToReconnect(index int) {
 			if atomic.LoadInt32(&rf.peersIsConnect[index]) == 0{
 				log.Printf("CRITICAL : In tryToConnect resourse is zero!")
 			}
-
-			// 至此其他RPC协程也能够正常运行了
+			log.Printf("INFO : [%d] Reconnect %d peers success!\n", rf.me, index)
+			// 至此其他RPC协程也能够正常运行了,其实这里不需要CompareAndSwapInt32,直接减1就完事了,但需要原子减一
 			atomic.CompareAndSwapInt32(&rf.peersIsConnect[index], 1 , 0)
 
 			break
@@ -279,7 +270,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		err = rf.peers[server].Call("Raft.RequestVote", args, reply)
 
 		if err != nil {
-			//log.Println("INFO : ", err.Error())
 			log.Printf("WARNING : %d is leader, Failed to connect with peers(%d). Try to connect.\n", rf.me, server)
 			// 启动一个协程进行重连
 			go rf.tryToReconnect(server)
@@ -456,7 +446,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 		err = rf.peers[server].Call("Raft.AppendEntries", args, reply)
 
 		if err != nil {
-			//log.Println("INFO : ", err.Error())
 			log.Printf("WARNING : %d is leader, Failed to connect with peers(%d). Try to connect.\n", rf.me, server)
 			// 启动一个协程进行重连
 			go rf.tryToReconnect(server)
@@ -560,14 +549,16 @@ func (rf *Raft) consistencyCheckReplyHandler(n int, reply *AppendEntriesReply) {
 		}
 		// 发送一个快照
 		if rf.snapshotIndex != 0 && rf.nextIndex[n] <= rf.snapshotIndex {
-			DPrintf("[%d]: peer %d need snapshot, rf.nextIndex <= rf.snapshotIndex (%d < %d).\n",
+			log.Printf("INFO : [%d] peer %d need a snapshot, nextIndex(%d) snapshotIndex(%d).\n",
 				rf.me, n, rf.nextIndex[n], rf.snapshotIndex)
 			rf.sendSnapshot(n)
 		} else { // 正常情况 下次心跳会自动更新
 			// snapshot + 1 <= rf.nextIndex[n] <= len(rf.Logs) + snapshot
+			// 其实大于len(rf.Logs)+rf.snapshotIndex的时候是出现了bug的
 			rf.nextIndex[n] = min(max(rf.nextIndex[n], 1+rf.snapshotIndex), len(rf.Logs)+rf.snapshotIndex)
-			DPrintf("[%d]: nextIndex for peer %d  => %d (snapshot: %d).\n",
-				rf.me, n, rf.nextIndex[n], rf.snapshotIndex)
+			// 排错的时候再打
+/*			log.Printf("INFO : [%d] nextIndex for peer %d  => %d (snapshot: %d).\n",
+				rf.me, n, rf.nextIndex[n], rf.snapshotIndex)*/
 		}
 	}
 }
@@ -685,7 +676,7 @@ func (rf *Raft) applyLogEntryDaemon() {
 			select {
 			case <-rf.shutdownCh:
 				rf.mu.Unlock()
-				DPrintf("[%d]: peer %d is shutting down apply log entry to client daemon.\n", rf.me, rf.me)
+				log.Printf("INFO : [%d] is shutting down actively(applyLogEntry).\n", rf.me)
 				close(rf.applyCh)
 				return
 			default:
@@ -879,16 +870,18 @@ func (rf *Raft) CreateSnapshots(index int) {
 	// ----------------|       ||         |
 	// snapshotIndex---[sna+1, commitIndex];只有index落在区间A是有效的
 	if rf.commitIndex < index || index <= rf.snapshotIndex {
-		panic("NewSnapShot(): new.snapshotIndex <= old.snapshotIndex")
+		log.Printf("ERROR : NewSnapShot(): new.snapshotIndex <= old.snapshotIndex.\n")
+		return
 	}
-	// 丢弃日志，前面的快照已经在kv层保存过了
+	// 丢弃日志，前面的快照已经在kvracft层保存过了
 	rf.Logs = rf.Logs[index-rf.snapshotIndex:]
 
 	rf.snapshotIndex = index
 	rf.snapshotTerm = rf.Logs[0].Term
 
-	DPrintf("[%d]: peer %d have new snapshot, %d @ %d.\n",
-		rf.me, rf.me, rf.snapshotIndex, rf.snapshotTerm)
+	log.Printf("INFO : [%d] Create a new snapshot, snapshotIndex(%d) snapshotTerm(%d).\n",
+		rf.me, rf.snapshotIndex, rf.snapshotTerm)
+
 	rf.persist()
 }
 
@@ -914,28 +907,27 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	reply.IsOk = true
 	select {
 	case <-rf.shutdownCh:
-		DPrintf("[%d]: peer %d is shutting down, reject install snapshot rpc request.\n",
-			rf.me, rf.me)
+		log.Printf("INFO : [%d] is shutting down actively(InstallSnapshot).\n", rf.me)
 		return nil
 	default:
 	}
 
-	DPrintf("[%d]: rpc snapshot, from peer: %d, term: %d\n", rf.me, args.LeaderID, args.Term)
+	log.Printf("INFO : [%d] Accept a snapshot, from Peer: %d, PeerTerm: %d\n", rf.me, args.LeaderID, args.Term)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.CurrentTerm = rf.CurrentTerm
 
 	if args.Term < rf.CurrentTerm {
-		DPrintf("[%d]: rpc snapshot, args.term < rf.CurrentTerm (%d < %d)\n", rf.me,
+		log.Printf("WARNING : [%d] a lagging snapshot, args.term(%d) < CurrentTerm(%d).\n", rf.me,
 			args.Term, rf.CurrentTerm)
 		return nil
 	}
 
 	// 快照可能也会重复
 	if args.LastIncludedIndex <= rf.snapshotIndex {
-		DPrintf("[%d]: rpc snapshot, args.LastIncludedIndex <= rf.snapshotIndex (%d < %d)\n", rf.me,
-			args.LastIncludedIndex, rf.snapshotIndex)
+		log.Printf("WARNING : [%d] peers(%d) is a lower snapshot, args.LastIncludedIndex(%d) <= rf.snapshotIndex(%d)\n",
+			rf.me, args.LeaderID ,args.LastIncludedIndex, rf.snapshotIndex)
 		return nil
 	}
 
@@ -944,7 +936,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	// 当快照大于全部的日志时，用快照更新raft的全部属性
 	if args.LastIncludedIndex >= rf.snapshotIndex+len(rf.Logs)-1 {
 
-		DPrintf("[%d]: rpc snapshot, snapshot have all logs (%d >= %d + %d - 1).\n", rf.me,
+		// 这里计算的时候注意减1,因为snapshotIndex这一点没有存快照
+		log.Printf("INFO : [%d] Accept a suitable snapshot, args.LastIncludedIndex(%d), rf.snapshotIndex(%d), LogLength(%d).\n", rf.me,
 			args.LastIncludedIndex, rf.snapshotIndex, len(rf.Logs))
 
 		rf.snapshotIndex = args.LastIncludedIndex
@@ -960,8 +953,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 
 	// 本地日志大于快照，只更新一部分
-	DPrintf("[%d]: rpc snapshot, snapshot have some logs (%d < %d + %d - 1).\n", rf.me,
-		args.LastIncludedIndex, rf.snapshotIndex, len(rf.Logs))
+	log.Printf("INFO : [%d] snapshot have some logs. args.LastIncludedIndex(%d), rf.snapshotIndex(%d), LogLength(%d).\n",
+		rf.me, args.LastIncludedIndex, rf.snapshotIndex, len(rf.Logs))
 
 	// [snapshotIndex, 8, LastIncludedIndex,10 ]
 	// [7,8,9,10]
@@ -988,7 +981,6 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 		err = rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 
 		if err != nil {
-			//log.Println("INFO : ", err.Error())
 			log.Printf("WARNING : %d is leader, Failed to connect with peers(%d). Try to connect.\n", rf.me, server)
 			// 启动一个协程进行重连
 			go rf.tryToReconnect(server)
@@ -1020,6 +1012,7 @@ func (rf *Raft) sendSnapshot(server int) {
 		LeaderID:          rf.me,
 		Snapshot:          rf.persister.ReadSnapshot(), // 把快照发送过去
 	}
+
 	replayHandler := func(server int, reply *InstallSnapshotReply) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
@@ -1036,10 +1029,10 @@ func (rf *Raft) sendSnapshot(server int) {
 			rf.nextIndex[server] = rf.snapshotIndex + 1
 		}
 	}
-	go func() {
+	go func(index int) {
 		var reply InstallSnapshotReply
-		if rf.sendInstallSnapshot(server, args, &reply) {
-			replayHandler(server, &reply)
+		if rf.sendInstallSnapshot(index, args, &reply) {
+			replayHandler(index, &reply)
 		}
-	}()
+	}(server)
 }
