@@ -1,4 +1,4 @@
-package KvServer
+package BaseServer
 
 const (
 	OK         = "OK"
@@ -21,7 +21,7 @@ type PutAppendArgs struct {
 }
 
 type PutAppendReply struct {
-	Err         Err		// 定义了五种错误 足以说明状态转换了
+	Err         Err		// 定义了六种错误 足以说明状态转换了
 }
 
 type GetArgs struct {
@@ -34,3 +34,4 @@ type GetReply struct {
 	Err         Err
 	Value       string
 }
+

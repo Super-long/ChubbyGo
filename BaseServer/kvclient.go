@@ -1,4 +1,4 @@
-package KvServer
+package BaseServer
 
 import (
 	"HummingbirdDS/Flake"

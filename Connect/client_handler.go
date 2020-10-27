@@ -1,7 +1,7 @@
 package Connect
 
 import (
-	"HummingbirdDS/KvServer"
+	"HummingbirdDS/BaseServer"
 	"log"
 	"net"
 	"net/rpc"
@@ -13,7 +13,7 @@ import (
 type ClientConfig struct {
 	servers        []*rpc.Client   // 表示其他几个服务器的连接句柄
 	serversIsOk    []int32         // 表示哪些服务器此时可以连接
-	clk            *KvServer.Clerk // 一个客户端的实体
+	clk            *BaseServer.Clerk // 一个客户端的实体
 	nservers       int             // 连接的服务器数
 	ServersAddress []string        `json:"client_address"` // 从配置文件中读取服务器的地址
 	Maxreries      int             `json:"maxreries"`      // 超时重连最大数
@@ -226,7 +226,7 @@ func (cfg *ClientConfig) StartClient() error {
 		log.Println(err.Error())
 		return ErrorInStartServer(connect_error)
 	}
-	cfg.clk = KvServer.MakeClerk(cfg.servers, &(cfg.serversIsOk))
+	cfg.clk = BaseServer.MakeClerk(cfg.servers, &(cfg.serversIsOk))
 	return nil
 }
 

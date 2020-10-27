@@ -2,7 +2,7 @@ package Connect
 
 import (
 	"HummingbirdDS/Flake"
-	"HummingbirdDS/KvServer"
+	"HummingbirdDS/BaseServer"
 	"HummingbirdDS/Persister"
 	"log"
 	"net"
@@ -21,7 +21,7 @@ type ServerConfig struct {
 	peers     []*rpc.Client        // 表示其他几个服务器的连接句柄
 	me        uint64               // 后面改成全局唯一ID
 	nservers  int                  // 表示一共有多少个服务器
-	kvserver  *KvServer.RaftKV     // 一个raftkv实体
+	kvserver  *BaseServer.RaftKV     // 一个raftkv实体
 	persister *Persister.Persister // 持久化实体
 	mu        sync.Mutex           // 用于保护本结构体的变量
 	// 不设置成大写没办法从配置文件中读出来
@@ -208,7 +208,7 @@ func (cfg *ServerConfig) checkJsonParser() error {
 		return ErrorInParserConfig(parser_raftstate_file_name)
 	}
 
-	// 解析RaftstateFileName是否符合规范
+	// 解析PersistenceStrategy是否符合规范
 	if !checkPersistenceStrategy(cfg.PersistenceStrategy){
 		return ErrorInParserConfig(parser_persistence_strategy)
 	}
@@ -246,7 +246,7 @@ func (cfg *ServerConfig) StartServer() error {
 	}
 
 	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
-	cfg.kvserver = KvServer.StartKVServerInit(cfg.me, cfg.persister, cfg.MaxRaftState)
+	cfg.kvserver = BaseServer.StartKVServerInit(cfg.me, cfg.persister, cfg.MaxRaftState)
 	cfg.kvserver.StartRaftServer(&cfg.ServersAddress)
 
 	cfg.serverRegisterFun()
