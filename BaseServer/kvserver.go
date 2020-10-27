@@ -11,15 +11,6 @@ import (
 	"sync/atomic"
 )
 
-type Op struct {
-	Key      string
-	Value    string
-	Op       string 	// 代表单个操作的字符串Get，Put，Append
-	// 这样做就使得一个客户端一次只能执行一个操作了
-	ClientID uint64  	// 每个Client的ID
-	Clientseq    int    // 这个ClientID上目前的操作数
-}
-
 type LatestReply struct {
 	Seq   int      // 最新的序列号
 	Value string // 之所以get不直接从db中取是因为取时的最新值不一定是读时的最新值，我们需要一个严格有序的操作序列
@@ -39,6 +30,7 @@ type RaftKV struct {
 	snapshotIndex int								// 现在日志上哪一个位置以前都已经是快照了，包括这个位置
 	KvDictionary            map[string]string		// 字典
 	ClientSeqCache 			map[int64]*LatestReply	// 用作判断当前请求是否已经执行过
+	ClientInstanceSeq		map[uint64]uint64		// 用作返回给客户端的InstanceSeq
 
 	shutdownCh chan struct{}
 
@@ -174,99 +166,6 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	return nil
 }
 
-/*
- * @brief: 为了从raft接收数据，负责把从applyCh中接收到的命令转化成数据库中的值
- * 并在接收到命令的同时通知请求上的channel用于向客户返回数据
-*/
-func (kv *RaftKV) acceptFromRaftDaemon() {
-	for {
-		select {
-		case <-kv.shutdownCh:
-			log.Printf("INFO : [%d] is shutting down actively.\n", kv.me)
-			return
-		case msg, ok := <-kv.applyCh:
-			if ok {
-
-				// 发送的是一个快照
-				if msg.UseSnapshot {
-					kv.mu.Lock()
-					kv.readSnapshot(msg.Snapshot)
-					// 这里我们需要持久化一下，否则可能在快照生成之前崩溃，这些数据就丢了
-					kv.persisterSnapshot(msg.Index)
-					kv.mu.Unlock()
-					continue
-				}
-				if msg.Command == nil {
-					log.Printf("ERROR : [%d] accept a package, msg.Command is null.\n", kv.me)
-				}
-				if msg.Command != nil && msg.Index > kv.snapshotIndex {
-					cmd := msg.Command.(Op)
-					kv.mu.Lock()
-					//	显然在是一个新用户或者新操作seq大于ClientSeqCache中的值时才执行
-					if dup, ok := kv.ClientSeqCache[int64(cmd.ClientID)]; !ok || dup.Seq < cmd.Clientseq {
-						//if ok {
-						//	log.Printf("DEBUG : dup.Seq %d ; cmd.Clientseq %d\n", dup.Seq , cmd.Clientseq)
-						//}
-						switch cmd.Op {
-						case "Get":
-							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,
-								Value:kv.KvDictionary[cmd.Key],}
-						case "Put":
-							kv.KvDictionary[cmd.Key] = cmd.Value
-							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
-						case "Append":
-							kv.KvDictionary[cmd.Key] += cmd.Value
-							kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
-						default:
-							log.Printf("ERROR : [%d] receive a invalid cmd %v.\n", kv.me, cmd)
-						}
-						// 调试时打印这个消息
-/*						if ok {
-							log.Printf("INFO : [%d] accept a operation. index(%d), cmd(%s), client(%d), oldSeq(%d)->newSeq(%d)\n",
-								kv.me, msg.Index, cmd.Op, cmd.ClientID, dup.Seq, cmd.Clientseq)
-						}*/
-					}else {
-						// 这种情况会在多个客户端使用相同ClientID时出现
-						log.Println("ERROR : Multiple clients have the same ID !")
-						// log.Printf("错误情况 dup.Seq %d ; cmd.Clientseq %d\n", dup.Seq , cmd.Clientseq)
-					}
-					// msg.IsSnapshot && kv.isUpperThanMaxraftstate()
-					if kv.isUpperThanMaxraftstate() {
-						log.Printf("INFO : [%d] need create a snapshot. maxraftstate(%d), nowRaftStateSize(%d), clientID(%d).\n",
-							kv.me, kv.maxraftstate, kv.persist.RaftStateSize(), cmd.ClientID)
-						kv.persisterSnapshot(msg.Index) 	// 此index以前的数据已经打包成快照了
-						// 需要解决死锁；8月24日已解决!
-						kv.rf.CreateSnapshots(msg.Index)	// 使协议层进行快照
-					}
-
-					// 通知服务端操作
-					if notifyCh, ok := kv.LogIndexNotice[msg.Index]; ok && notifyCh != nil {
-						close(notifyCh)
-						delete(kv.LogIndexNotice, msg.Index)
-					}
-					kv.mu.Unlock()
-				}
-			}
-		}
-	}
-}
-
-func (kv *RaftKV) isUpperThanMaxraftstate() bool {
-	if kv.maxraftstate <= 0 { // 小于等于零的时候不执行快照
-		return false
-	}
-	// 后者其实存储的是Raft的状态大小，这个大小在Raft库中是在每次持久化时维护的
-	if kv.maxraftstate < kv.persist.RaftStateSize(){
-		return true
-	}
-	// 以上两种是极端情况，我们需要考虑靠近临界值时就持久化快照，暂定15%
-	var interval = kv.maxraftstate - kv.persist.RaftStateSize()
-	if interval < kv.maxraftstate/20 * 3{
-		return true
-	}
-	return false
-}
-
 func (kv *RaftKV) persisterSnapshot(index int) {
 	w := new(bytes.Buffer)
 	e := gob.NewEncoder(w)
@@ -312,6 +211,7 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 	kv.applyCh = make(chan Raft.ApplyMsg)
 
 	kv.KvDictionary = make(map[string]string)
+	kv.ClientInstanceSeq = make(map[uint64]uint64)
 	kv.LogIndexNotice = make(map[int]chan struct{})
 	kv.persist = persister
 
@@ -325,9 +225,12 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 	// 开始的时候读取快照
 	kv.readSnapshot(persister.ReadSnapshotFromFile())
 	// ps：很重要,因为从文件中读取的值只是字段，还没有存在persister中,只有存了以后才可以持久化成功,否则会出现宕机重启后snapshot.hdb为0
-	kv.persisterSnapshot(kv.snapshotIndex)
+	kv.persisterSnapshot(kv.snapshotIndex)	// 这样写会导致起始snapshot.hdb文件大小为76,不过问题不大,因为必须这样做
 
 	//log.Printf("DEBUG : [%d] snapshotIndex(%d), len(%d) .\n",kv.me ,kv.snapshotIndex, len(kv.ClientSeqCache))
+
+	// 不写在这里会写在InitFileOperation会出现环状调用，这里的结构可以后面改一改，耦合太高
+	RootFileOperation.pathToFileSystemNodePointer[RootFileOperation.root.nowPath] = RootFileOperation.root
 
 	return kv
 }

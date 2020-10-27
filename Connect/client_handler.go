@@ -281,6 +281,10 @@ func (cfg *ClientConfig) Get(key string) string {
 	return cfg.clk.Get(key)
 }
 
+func (cfg *ClientConfig) Open(pathname string)(bool,  *BaseServer.FileDescriptor){
+	return cfg.clk.Open(pathname)
+}
+
 // --------------------------
 // 使用Listener模式避免/Connect和/Config的环状引用
 

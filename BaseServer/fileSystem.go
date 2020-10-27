@@ -3,7 +3,6 @@ package BaseServer
 import (
 	"fmt"
 	"log"
-	"strconv"
 )
 
 const (
@@ -176,11 +175,11 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, name string) bool {
  * @return: 返回当前文件的instanceSeq
  * @notes: 不需要检测name是否存在，这个在前一层应该已经判断过了
  */
-func (Fsn *FileSystemNode) Open(InstanceSeq uint64, name string) uint64 {
+func (Fsn *FileSystemNode) Open(name string) uint64 {
 	// TODO 这里应该做一些权限的检测，但是现在并没有想好如何划分权限，先不急，返回当前InstanceSeq
-	Node := Fsn.next[name]
 
-	return Node.instanceSeq
+	// Open返回的应该是本文件的instanceSeq
+	return Fsn.instanceSeq
 }
 
 /*
@@ -188,12 +187,17 @@ func (Fsn *FileSystemNode) Open(InstanceSeq uint64, name string) uint64 {
  * @param: 此cell中leaderID的名称，用于组成根节点的名称；TODO 切主是需要改变名称，这个还挺麻烦
  * @return: 返回根目录的实体
  */
-func InitRoot(leaderID uint64 ) *FileSystemNode{
+func InitRoot() *FileSystemNode{
 	root := &FileSystemNode{}
 
 	root.fileType = directory
-	// TODO 访问控制如何调整 这个显然需要读取配置文件了
-	root.fileName = "ChubbyCell_" + strconv.Itoa(int(leaderID))
+	// TODO 访问控制如何调整 就是一系列的ACLs 这个显然需要读取配置文件了
+
+	// 想来想去，如果把Chubby Cell的名字改成与leaderID，后面切主会比较麻烦，对于外界来说也不好调用
+	// 因为理想的调用方法是有一个DNS服务器，客户端可以使用名称来得到这个Cell的地址
+	// 此时直接取名就方便的多，TODO 后面这里还是要读一手配置文件
+	//root.fileName = "ChubbyCell_" + strconv.Itoa(int(leaderID))
+	root.fileName = "ChubbyCell_" + "lizhaolong"
 
 	root.instanceSeq = 0
 	root.tockenSeq = 0
@@ -205,7 +209,8 @@ func InitRoot(leaderID uint64 ) *FileSystemNode{
 	root.next = make(map[string]*FileSystemNode)
 	root.nextNameCache = make(map[string]uint64)
 
-	RootFileOperation.pathToFileSystemNodePointer[root.nowPath] = root
+/*	log.Printf("目前的路径名 : %s\n", root.nowPath)
+	RootFileOperation.pathToFileSystemNodePointer[root.nowPath] = root*/
 
 	return root
 }
