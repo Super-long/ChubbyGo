@@ -285,6 +285,14 @@ func (cfg *ClientConfig) Open(pathname string)(bool,  *BaseServer.FileDescriptor
 	return cfg.clk.Open(pathname)
 }
 
+func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, Type int, filename string) (bool, uint64){
+	return cfg.clk.Create(fd, Type, filename)
+}
+
+func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, filename string) bool {
+	return cfg.clk.Delete(fd, filename)
+}
+
 // --------------------------
 // 使用Listener模式避免/Connect和/Config的环状引用
 

@@ -81,7 +81,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 		}
 	}
 
-	NewOperation := Op{Key: args.Key, Op: "Get", ClientID: args.ClientID, Clientseq: args.SeqNo}
+	NewOperation := KvOp{Key: args.Key, Op: "Get", ClientID: args.ClientID, Clientseq: args.SeqNo}
 
 	log.Printf("INFO : ClientId[%d], GET:key(%s)\n", args.ClientID,args.Key)
 
@@ -139,7 +139,7 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	}
 
 	// 新请求
-	NewOperation := Op{Key: args.Key, Value: args.Value, Op: args.Op, ClientID: args.ClientID, Clientseq: args.SeqNo}
+	NewOperation := KvOp{Key: args.Key, Value: args.Value, Op: args.Op, ClientID: args.ClientID, Clientseq: args.SeqNo}
 
 	log.Printf("INFO : ClientId[%d], PUTAPPEND:key(%s),value(%s)\n", args.ClientID,args.Key, args.Value)
 
@@ -202,7 +202,8 @@ func (kv *RaftKV) readSnapshot(data []byte) {
 }*/
 
 func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate int) *RaftKV {
-	gob.Register(Op{})
+	gob.Register(KvOp{})
+	gob.Register(FileOp{})
 
 	kv := new(RaftKV)
 	kv.me = me

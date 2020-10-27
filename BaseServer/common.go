@@ -10,6 +10,7 @@ const (
 	ConnectError = "ConnectError"	// 最特殊的一项 用于判断对端服务器是否连接成功 如果对端还未与全部服务器连接成功 则什么也不干
 
 	OpenError = "OpenError"
+	CreateError = "CreateError"
 	)
 
 type Err string
@@ -54,4 +55,30 @@ type OpenReply struct {
 type FileDescriptor struct {
 	InstanceSeq uint64
 	PathName string
+}
+
+type CreateArgs struct {
+	ClientID uint64
+	SeqNo    int
+	InstanceSeq uint64
+	FileType int
+	PathName string	// 用PathName在服务器解析出节点
+	FileName string	// 然后使用FileName创建文件
+}
+
+type CreateReply struct {
+	Err         Err
+	InstanceSeq uint64
+}
+
+type CloseArgs struct {
+	ClientID uint64
+	SeqNo    int
+	InstanceSeq uint64
+	PathName string
+	FileName string
+}
+
+type CloseReply struct {
+	Err         Err
 }
