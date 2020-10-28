@@ -4,7 +4,7 @@
   "maxreries" : 13,
   "timeout_entry" : 200,
   "maxraftstate" : 1000000,
-  "snapshotfilename" : "Persister/snapshot3.hdb",
-  "raftstatefilename" : "Persister/raftstate3.hdb",
+  "snapshotfilename" : "Persister/snapshot1.hdb",
+  "raftstatefilename" : "Persister/raftstate1.hdb",
   "persistencestrategy" : "everysec"
 }

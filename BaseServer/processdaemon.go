@@ -20,7 +20,8 @@ type FileOp struct {
 	Clientseq    int    // 这个ClientID上目前的操作数
 
 	InstanceSeq	uint64	// 每次请求的InstanceSeq，用于判断请求是否过期
-	LockOrFileType	int	// 锁定类型或者文件类型，反正两个不会一起用，实在不行后面搞成位运算的
+	LockOrFileType	int	// 锁定类型或者文件类型，反正两个不会一起用，TODO 实在不行后面搞成位运算的
+	OpType		int
 	FileName	string	// 在open时是路径名，其他时候是文件名
 	PathName	string	// 路径名称
 	// TODO 权限控制位,现在还没用,因为不确定到底该以什么形式来设置权限
@@ -121,7 +122,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
 								node ,ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
-									flag := node.Delete(cmd.InstanceSeq, cmd.FileName)
+									flag := node.Delete(cmd.InstanceSeq, cmd.FileName, cmd.OpType)
 									if flag{
 										log.Printf("INFO : [%d] Delete file(%s) sucess.\n", kv.me, cmd.FileName)
 										kv.ClientInstanceSeq[cmd.ClientID] = 0	// 特殊的情况,我们需要一个通知机制
@@ -130,6 +131,24 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 									}
 								} else {
 									log.Printf("INFO : [%d] Delete Not find path(%s)!\n",kv.me, cmd.PathName)
+								}
+							case "Acquire":
+								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
+								node ,ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
+								if ok{
+									seq, ok := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileType)
+									if ok{
+										var LockTypeName string
+										if cmd.LockOrFileType == WriteLock{
+											LockTypeName = "WriteLock"
+										}else {
+											LockTypeName = "ReadLock"
+										}
+										kv.ClientInstanceSeq[cmd.ClientID] = seq
+										log.Printf("INFO : [%d] Acquire file(%s) sucess, locktype is %s.\n", kv.me, cmd.FileName, LockTypeName)
+									} else {
+										log.Printf("INFO : [%d] Acquire Not find path(%s)!\n",kv.me, cmd.PathName)
+									}
 								}
 							}
 						}else {

@@ -11,7 +11,14 @@ const (
 
 	OpenError = "OpenError"
 	CreateError = "CreateError"
+	AcquireError = "AcquireError"
 	)
+
+// 用于Delete RPC
+const (
+	Opdelete = iota	// 当引用计数为零时删除永久文件/目录
+	Opclose	// 当引用计数为零时不删除永久文件/目录
+)
 
 type Err string
 
@@ -77,8 +84,23 @@ type CloseArgs struct {
 	InstanceSeq uint64
 	PathName string
 	FileName string
+	opType	int
 }
 
 type CloseReply struct {
 	Err         Err
+}
+
+type AcquireArgs struct {
+	ClientID uint64
+	SeqNo    int
+	InstanceSeq uint64
+	PathName string
+	FileName string
+	LockType int
+}
+
+type AcquireReply struct {
+	Err         Err
+	InstanceSeq uint64
 }

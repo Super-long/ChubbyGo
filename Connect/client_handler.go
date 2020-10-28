@@ -5,18 +5,19 @@ import (
 	"log"
 	"net"
 	"net/rpc"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type ClientConfig struct {
-	servers        []*rpc.Client   // 表示其他几个服务器的连接句柄
-	serversIsOk    []int32         // 表示哪些服务器此时可以连接
+	servers        []*rpc.Client     // 表示其他几个服务器的连接句柄
+	serversIsOk    []int32           // 表示哪些服务器此时可以连接
 	clk            *BaseServer.Clerk // 一个客户端的实体
-	nservers       int             // 连接的服务器数
-	ServersAddress []string        `json:"client_address"` // 从配置文件中读取服务器的地址
-	Maxreries      int             `json:"maxreries"`      // 超时重连最大数
+	nservers       int               // 连接的服务器数
+	ServersAddress []string          `json:"client_address"` // 从配置文件中读取服务器的地址
+	Maxreries      int               `json:"maxreries"`      // 超时重连最大数
 }
 
 func CreateClient() *ClientConfig {
@@ -60,16 +61,16 @@ func (cfg *ClientConfig) connectAll() error {
 
 	sem := make(Semaphore, cfg.nservers-1)
 	sem_number := 0
-	var HTTPError	 	int32 = 0						// HTTPError可能出现的次数
-	var TimeOut 		[]int							// 超时的服务器数量
-	var TimeoutMutex 	sync.Mutex						// 保护Timeout
-	var SucessConnect 	int32 = 0						// 在此函数运行期间成功连接数，显然大于等于target才会退出
-	var StartServer 	uint32 = 0						// 用于此函数退出以后仍在运行的协程，当值大于0时永久运行
-	servers_length := 	len(cfg.ServersAddress)			// 需要连接的服务器数
-	var target int32 = 	int32(servers_length/2 + 1)		// 在 target个服务器连接成功时结束
+	var HTTPError int32 = 0                        // HTTPError可能出现的次数
+	var TimeOut []int                              // 超时的服务器数量
+	var TimeoutMutex sync.Mutex                    // 保护Timeout
+	var SucessConnect int32 = 0                    // 在此函数运行期间成功连接数，显然大于等于target才会退出
+	var StartServer uint32 = 0                     // 用于此函数退出以后仍在运行的协程，当值大于0时永久运行
+	servers_length := len(cfg.ServersAddress)      // 需要连接的服务器数
+	var target int32 = int32(servers_length/2 + 1) // 在 target个服务器连接成功时结束
 
 	//用于判断是否超过每一项是否超过Maxreries,其实可以复用cfg.serversIsOk,因为每一项不冲突,但是我觉得功能划分清楚一点比较好
-	PeerExceedMaxreries := make([]bool, servers_length)	// 记录重传超过Maxreries次的服务器的个数
+	PeerExceedMaxreries := make([]bool, servers_length) // 记录重传超过Maxreries次的服务器的个数
 
 	for i := 0; i < servers_length; i++ {
 		if atomic.LoadInt32(&HTTPError) > 0 { // TODO 此版本仍然不忍耐这种错误，后面尝试如何复现这种错误
@@ -100,7 +101,7 @@ func (cfg *ClientConfig) connectAll() error {
 
 						// 至少target台服务器都经历过Maxreries次的重传
 						// 可能一台服务器重试Maxreries以后重连成功，其他服务器接下来会无线重连，应该加上对StartServer的判断
-						if atomic.LoadUint32(&StartServer) == 0 && judgeTrueNumber(PeerExceedMaxreries) >= target{
+						if atomic.LoadUint32(&StartServer) == 0 && judgeTrueNumber(PeerExceedMaxreries) >= target {
 							break
 						}
 
@@ -149,7 +150,7 @@ func (cfg *ClientConfig) connectAll() error {
 			}
 		} else {
 			atomic.AddInt32(&SucessConnect, 1)
-			atomic.AddInt32(&cfg.serversIsOk[i], 1)	// 标记这个peer可以连接
+			atomic.AddInt32(&cfg.serversIsOk[i], 1) // 标记这个peer可以连接
 			log.Printf("与%d 连接成功\n", cfg.ServersAddress[i])
 			cfg.servers[i] = client
 		}
@@ -281,16 +282,21 @@ func (cfg *ClientConfig) Get(key string) string {
 	return cfg.clk.Get(key)
 }
 
-func (cfg *ClientConfig) Open(pathname string)(bool,  *BaseServer.FileDescriptor){
+func (cfg *ClientConfig) Open(pathname string) (bool, *BaseServer.FileDescriptor) {
 	return cfg.clk.Open(pathname)
 }
 
-func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, Type int, filename string) (bool, uint64){
+func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, Type int, filename string) (bool, *BaseServer.FileDescriptor) {
 	return cfg.clk.Create(fd, Type, filename)
 }
 
-func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, filename string) bool {
-	return cfg.clk.Delete(fd, filename)
+func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, filename string, opType int) bool {
+	return cfg.clk.Delete(fd, filename, opType)
+}
+
+func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int) (bool, uint64) {
+	index := strings.LastIndex(fd.PathName, "/")
+	return cfg.clk.Acquire(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, LockType)
 }
 
 // --------------------------

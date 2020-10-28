@@ -166,7 +166,7 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Delete", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, OpType : args.opType}
 
 	log.Printf("INFO : ClientId[%d], Delete : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
@@ -194,6 +194,65 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 			delete(kv.ClientInstanceSeq, args.ClientID)
 		} else {
 			reply.Err = CreateError
+		}
+		kv.mu.Unlock()
+	case <-kv.shutdownCh:
+		return nil
+	}
+
+	return nil
+}
+
+
+func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
+
+	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+		reply.Err = ConnectError
+		return nil
+	}
+
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = NoLeader
+		return nil
+	}
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
+	NewOperation := FileOp{Op: "Acquire", ClientID: args.ClientID, Clientseq: args.SeqNo,
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileType: args.LockType}
+
+	log.Printf("INFO : ClientId[%d], Acquire : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
+
+	index, term, _ := kv.rf.Start(NewOperation)
+
+	Notice := make(chan struct{})
+	kv.LogIndexNotice[index] = Notice
+	kv.mu.Unlock()
+
+	reply.Err = OK
+
+	select {
+	case <-Notice:
+		curTerm, isLeader := kv.rf.GetState()
+		if !isLeader || term != curTerm {
+			reply.Err = ReElection
+			return nil
+		}
+		kv.mu.Lock()
+
+		seq, ok := kv.ClientInstanceSeq[args.ClientID]
+		if ok{
+			delete(kv.ClientInstanceSeq, args.ClientID)
+			reply.InstanceSeq = seq
+		} else {
+			reply.Err = AcquireError
 		}
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:
