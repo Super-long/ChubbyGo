@@ -1,3 +1,20 @@
+/**
+ * Copyright lizhaolong(https://github.com/Super-long)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Code comment are all encoded in UTF-8.*/
+
 package BaseServer
 
 import (
@@ -108,12 +125,12 @@ func (ck *Clerk) Create(fd *FileDescriptor, Type int, filename string) (bool, *F
 /*
  * @param: opType为操作类型，可以为delete或者close
  */
-func (ck *Clerk) Delete(fd *FileDescriptor, filename string, opType int) bool {
+func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, opType int) bool {
 	cnt := len(ck.servers)
 
 	for {
-		args := &CloseArgs{PathName: fd.PathName, ClientID: ck.ClientID, SeqNo: ck.seq,
-			InstanceSeq: fd.InstanceSeq, FileName: filename, opType: opType}
+		args := &CloseArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
+			InstanceSeq: instanceseq, FileName: filename, opType: opType}
 
 		reply := new(CloseReply)
 
@@ -142,9 +159,8 @@ func (ck *Clerk) Delete(fd *FileDescriptor, filename string, opType int) bool {
 			if ok && (reply.Err == OK) {
 				ck.seq++
 				return true
-			} else if reply.Err == CreateError || reply.Err == Duplicate{
-				// 对端打开文件失败
-				log.Printf("INFO : Close (%s/%s) error -> [%s]\n", fd.PathName, filename, reply.Err)
+			} else if reply.Err == DeleteError || reply.Err == Duplicate{
+				log.Printf("INFO : Delete (%s/%s) error -> [%s]\n", pathname, filename, reply.Err)
 				ck.seq++
 				return false
 			}
@@ -197,6 +213,55 @@ func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, L
 				log.Printf("INFO : Acqurie (%s/%s) error -> [%s]\n", pathname, filename, reply.Err)
 				ck.seq++
 				return false, 0
+			}
+			ck.leader++
+		}
+	}
+}
+
+/*
+ * @brief: 对特定的文件进行解锁,需要tocken是因为标记锁的版本,防止一个锁在其定义的超时范围之外进行解锁,从而解掉其他节点持有的锁
+ * @param: 路径名和文件名来源于文件描述符;instanceseq号;tocken号
+ * @return: 返回解锁是否成功;
+ */
+func (ck *Clerk) Release(pathname string, filename string, instanceseq uint64, token uint64) bool {
+	cnt := len(ck.servers)
+
+	for {
+		args := &ReleaseArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
+			InstanceSeq: instanceseq, FileName: filename, Token: token}
+
+		reply := new(ReleaseReply)
+
+		ck.leader %= cnt
+
+		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0 {
+			ck.leader++
+			continue
+		}
+
+		replyArrival := make(chan bool, 1)
+		go func() {
+			err := ck.servers[ck.leader].Call("RaftKV.Release", args, reply)
+			flag := true
+			if err != nil {
+				log.Fatal(err.Error())
+				flag = false
+			}
+			replyArrival <- flag
+		}()
+		select {
+		case <-time.After(200 * time.Millisecond):
+			ck.leader++
+			continue
+		case ok := <-replyArrival:
+			if ok && (reply.Err == OK) {
+				ck.seq++
+				return true
+			} else if reply.Err == ReleaseError || reply.Err == Duplicate{
+				log.Printf("INFO : Release (%s/%s) error -> [%s]\n", pathname, filename, reply.Err)
+				ck.seq++
+				return false
 			}
 			ck.leader++
 		}

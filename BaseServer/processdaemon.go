@@ -1,3 +1,20 @@
+/**
+ * Copyright lizhaolong(https://github.com/Super-long)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Code comment are all encoded in UTF-8.*/
+
 package BaseServer
 
 import (
@@ -14,16 +31,19 @@ type KvOp struct {
 	Clientseq    int    // 这个ClientID上目前的操作数
 }
 
+// TODO 其中有很多字段互相不冲突。后面改成一个二进制的flag
 type FileOp struct {
 	Op       string 	// 代表单个操作的字符串open,create等一众操作
 	ClientID uint64  	// 每个Client的ID
 	Clientseq    int    // 这个ClientID上目前的操作数
 
 	InstanceSeq	uint64	// 每次请求的InstanceSeq，用于判断请求是否过期
-	LockOrFileType	int	// 锁定类型或者文件类型，反正两个不会一起用，TODO 实在不行后面搞成位运算的
-	OpType		int
+	Token		uint64	// 锁的版本号
+	LockOrFileType	int	// 锁定类型或者文件类型，反正两个不会一起用，
+	OpType		int		// Delete的操作类型
 	FileName	string	// 在open时是路径名，其他时候是文件名
 	PathName	string	// 路径名称
+
 	// TODO 权限控制位,现在还没用,因为不确定到底该以什么形式来设置权限
 	ReadAcl *[]uint64
 	WriteAcl *[]uint64
@@ -136,8 +156,8 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
 								node ,ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok{
-									seq, ok := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileType)
-									if ok{
+									seq, flag := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileType)
+									if flag{
 										var LockTypeName string
 										if cmd.LockOrFileType == WriteLock{
 											LockTypeName = "WriteLock"
@@ -148,6 +168,19 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 										log.Printf("INFO : [%d] Acquire file(%s) sucess, locktype is %s.\n", kv.me, cmd.FileName, LockTypeName)
 									} else {
 										log.Printf("INFO : [%d] Acquire Not find path(%s)!\n",kv.me, cmd.PathName)
+									}
+								}
+							case "Release":
+								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,}
+								node ,ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
+								if ok {
+									flag := node.Release(cmd.InstanceSeq, cmd.FileName, cmd.Token)
+									if flag {
+										kv.ClientInstanceSeq[cmd.ClientID] = 0	// 通知机制
+										// 这里只看读锁的引用计数,如果原先是读锁这就是正确的,如果是写锁Release以后也是零,是正确的;错误的话不会进入这里
+										log.Printf("INFO : [%d] Release file(%s) sucess, this file reference count is %d\n", kv.me, cmd.FileName, node.readLockReferenceCount)
+									} else {
+										log.Printf("INFO : [%d] Release Not find path(%s)!\n",kv.me, cmd.PathName)
 									}
 								}
 							}

@@ -36,7 +36,7 @@ func main(){
 	}
 
 	// 删除句柄,注意句柄仅由create创建，delete删除
-	ok = clientConfigs.Delete(fd, filename, BaseServer.Opdelete)
+	ok = clientConfigs.Delete(fd, BaseServer.Opdelete)
 	if ok {
 		fmt.Printf("Close file(%s) sucess\n", filename)
 	} else {
@@ -52,18 +52,27 @@ func main(){
 	}
 
 	// 对刚刚创建文件加锁
-	ok, tocken := clientConfigs.Acquire(fileFd, BaseServer.ReadLock)
+	ok, token := clientConfigs.Acquire(fileFd, BaseServer.ReadLock)
 	if ok {
-		fmt.Printf("Acquire (%s) sucess, Tocken is %d\n", filename, tocken)
+		fmt.Printf("Acquire (%s) sucess, Tocken is %d\n", filename, token)
 	} else {
 		fmt.Printf("Acquire Error!")
 	}
 
-	ok , tocken = clientConfigs.Acquire(fileFd, BaseServer.ReadLock)
+	// 显然一个节点加了读锁以后再加有点蠢
+	ok , token = clientConfigs.Acquire(fileFd, BaseServer.ReadLock)
 	if ok {
-		fmt.Printf("Acquire (%s) sucess, Tocken is %d\n", filename, tocken)
+		fmt.Printf("Acquire (%s) sucess, Token is %d\n", filename, token)
 	} else {	// 显然加了写锁以后无法加读锁
 		fmt.Printf("ReadLock Error!")
+	}
+
+	// 删除文件的时候带上自己加锁的Token
+	ok = clientConfigs.Release(fileFd, token)
+	if ok {
+		fmt.Printf("release (%s) sucess.\n", filename)
+	} else {
+		fmt.Printf("Release Error!")
 	}
 
 	return

@@ -1,3 +1,20 @@
+/**
+ * Copyright lizhaolong(https://github.com/Super-long)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Code comment are all encoded in UTF-8.*/
+
 package Connect
 
 import (
@@ -290,13 +307,27 @@ func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, Type int, filenam
 	return cfg.clk.Create(fd, Type, filename)
 }
 
-func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, filename string, opType int) bool {
-	return cfg.clk.Delete(fd, filename, opType)
+func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, opType int) bool {
+	index := strings.LastIndex(fd.PathName, "/")
+
+	return cfg.clk.Delete(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, opType)
 }
 
 func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int) (bool, uint64) {
 	index := strings.LastIndex(fd.PathName, "/")
+
+	RemainPath := fd.PathName[0:index]
+	if RemainPath == "/ls"{
+		log.Println("ERROR : Root node from every ChubbyGo cell can not be Acquired.")
+		return false, 0
+	}
+
 	return cfg.clk.Acquire(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, LockType)
+}
+
+func (cfg *ClientConfig) Release(fd *BaseServer.FileDescriptor, token uint64) bool {
+	index := strings.LastIndex(fd.PathName, "/")
+	return cfg.clk.Release(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, token)
 }
 
 // --------------------------

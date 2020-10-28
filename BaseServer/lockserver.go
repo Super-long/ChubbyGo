@@ -1,3 +1,20 @@
+/**
+ * Copyright lizhaolong(https://github.com/Super-long)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Code comment are all encoded in UTF-8.*/
+
 package BaseServer
 
 import (
@@ -193,7 +210,7 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 		if ok{
 			delete(kv.ClientInstanceSeq, args.ClientID)
 		} else {
-			reply.Err = CreateError
+			reply.Err = DeleteError
 		}
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:
@@ -202,7 +219,6 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 
 	return nil
 }
-
 
 func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
 
@@ -253,6 +269,64 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
 			reply.InstanceSeq = seq
 		} else {
 			reply.Err = AcquireError
+		}
+		kv.mu.Unlock()
+	case <-kv.shutdownCh:
+		return nil
+	}
+
+	return nil
+}
+
+func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error{
+
+	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+		reply.Err = ConnectError
+		return nil
+	}
+
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = NoLeader
+		return nil
+	}
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
+	NewOperation := FileOp{Op: "Release", ClientID: args.ClientID, Clientseq: args.SeqNo,
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, Token: args.Token}
+
+	log.Printf("INFO : ClientId[%d], Release : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
+
+	index, term, _ := kv.rf.Start(NewOperation)
+
+	Notice := make(chan struct{})
+	kv.LogIndexNotice[index] = Notice
+	kv.mu.Unlock()
+
+	reply.Err = OK
+
+	select {
+	case <-Notice:
+		curTerm, isLeader := kv.rf.GetState()
+		if !isLeader || term != curTerm {
+			reply.Err = ReElection
+			return nil
+		}
+		kv.mu.Lock()
+
+		_, ok := kv.ClientInstanceSeq[args.ClientID]
+		if ok{
+			// 因为这个命令中seq只是一个通知机制
+			delete(kv.ClientInstanceSeq, args.ClientID)
+		} else {
+			reply.Err = ReleaseError
 		}
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:

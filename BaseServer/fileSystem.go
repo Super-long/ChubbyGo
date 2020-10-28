@@ -1,9 +1,32 @@
+/**
+ * Copyright lizhaolong(https://github.com/Super-long)
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Code comment are all encoded in UTF-8.*/
+
 package BaseServer
 
 import (
 	"fmt"
 	"log"
+	"math/rand"
+	"reflect"
+	"time"
+	"unsafe"
 )
+
+// ps:文件系统中的所有操作都建立在有锁的基础上
 
 const (
 	Directory     = iota
@@ -19,16 +42,21 @@ const (
 
 type FileSystemNode struct {
 	// 在此文件下创建新文件时要传入的参数
-	fileType   int       // 三种文件类型
+	fileType   int       // 三种文件类型; 不支持链接文件
 	readACLs   *[]uint64 // 读权限access control lists
 	writeACLs  *[]uint64 // 写权限,请求任意类型的锁都需要写权限
 	modifyACLs *[]uint64 // 修改此节点ACL的权限列表
 	fileName   string    // 此文件的名称
 
-	instanceSeq uint64 // 实例编号:大于任意先前的同名节点的实例编号
-	tockenSeq   uint64 // 锁生成编号:当节点的锁从空闲状态转换到被持有状态时，这个值会增加。用于在持有锁超时时取消上一个seq的权限
-	aCLsSeq     uint64 // ACL生成编号：当写入节点的 ACL 名称时，这种情况会增加。	// 目前没有看懂有什么用处
-	// 目前在考虑是否需要加校验位,三个seq足以标记这个节点是否被人修改了
+	instanceSeq uint64	// 实例编号:大于任意先前的同名节点的实例编号
+	tokenSeq   uint64	// 锁生成编号:当节点的锁从空闲状态转换到被持有状态时，这个值会增加。用于在持有锁超时时取消上一个seq的权限
+	aCLsSeq     uint64	// ACL生成编号：当写入节点的 ACL 名称时，这种情况会增加。	// 目前没有看懂有什么用处
+
+	// 本来想加入FileSystemNode地址,但是go的栈会变,所以打消了这个念头
+	// 因为在文件描述符期间instanceSeq不会改变,但总体是改变的;
+	// 如此看来Checksum不一定是整个结构体的某种校验和,只要保证随机性就ok了
+	// TODO 当文件的引用计数delete为零时修改Checksum,其他时候不管是open返回还是检查直接操作节点内的Checksum就ok;
+	Checksum	uint64	// 返回客户端用以构造一个难以被伪造的文件描述符
 
 	OpenReferenceCount     uint64 // open的引用计数,主要用于文件夹,可以理解为文件的描述符没什么意义,文件有意义的是LockType
 	nowLockType            int    // 目前的上锁类型,有三种情况
@@ -38,6 +66,34 @@ type FileSystemNode struct {
 	nowPath       string                     // 标记当前的路径，用于从raft日志字典中获取此文件中存储的值
 	nextNameCache map[string]uint64          // 其实就是下一级的InstanceSeq;当该节点是文件时此字段无效
 	next          map[string]*FileSystemNode // 使用map可以更快的找到下一级的全部文件节点，且有序;当该节点是文件时此字段无效
+}
+
+/*
+ * @brief: 基于FileSystemNode生成一个新的CheckSum; 其实保证随机性就ok了;我这种生成方式最大程度与文件有关
+ * @notes: 大费周章的生成这样一个数是否有必要呢?虽然用的也不多
+ */
+func (Fsn *FileSystemNode) makeCheckSum() uint64 {
+	var res uint64
+
+	// step1: 取对象地址的值
+	// AddressValue可以获取对象的地址的64位整数具体的值
+	p := reflect.ValueOf(unsafe.Pointer(&Fsn))
+	// 因为整个地址的低位是0Xc起头的，有一位可以推出来，程序比较小的时候很多位都可以推出来，所以我们使用右边32位
+	// var AddressValue uint64 = uint64(p.Pointer())
+	res = uint64(p.Pointer())
+
+	// step2: 得instanceSeq的值，暂定后十位
+	res += Fsn.instanceSeq << 32
+
+	// step3: 随机生成一个值
+	rand.Seed(time.Now().Unix())	// 用时间作为随机数种子
+	high := rand.Intn(2<<22 - 1)	// 伪随机数
+
+	res += uint64(high) << 42
+
+	// [63  42][41  32][31  0]
+	// [随机数][instanceSeq][address]
+	return res
 }
 
 /*
@@ -74,9 +130,9 @@ func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, Rea
 	NewNode.writeACLs = WriteAcl
 	NewNode.modifyACLs = ModifyAcl
 
-	Seq := Fsn.nextNameCache[name] // TODO 在删除的时候递增seq
-	NewNode.instanceSeq = Seq      // 使用的时候直接用就好，delete的时候会递增
-	NewNode.tockenSeq = 0          // 使用的时候先递增，再取值，也就是说TockenSeq最低有效值是1
+	Seq := Fsn.nextNameCache[name]
+	NewNode.instanceSeq = Seq // 使用的时候直接用就好，delete的时候会递增
+	NewNode.tokenSeq = 0     // 使用的时候先递增，再取值，也就是说TockenSeq最低有效值是1
 	NewNode.aCLsSeq = 0
 
 	NewNode.nowLockType = NotLock
@@ -94,7 +150,7 @@ func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, Rea
 /*
  * @param: 文件描述符传来的InstanceSeq，要删除的文件的名字
  * @return: 成功删除返回true，否则返回false
- * @notes: 需要检测name是否存在; TODO 加一个参数使得这个函数既可以close又可以delete
+ * @notes: 需要检测name是否存在;
  */
 func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType int) bool {
 	Node, IsExist := Fsn.next[filename]
@@ -117,12 +173,12 @@ func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType in
 
 	// close :引用计数为零时只有临时文件会被删除，永久文件和目录文件都不会被删除
 	// delete: 相反
-	if Node.OpenReferenceCount != 0{
+	if Node.OpenReferenceCount != 0 {
 		return true // delete成功，其实只是把客户端的句柄消除掉而已
 	}
 
 	// name存在,引用计数为零且与远端InstanceSeq相等，可以执行删除
-	if opType == Opdelete || Node.fileType == TemporaryFile {	// 此次是delete操作,如果是close操作的话永久文件和目录则不需要删除
+	if opType == Opdelete || Node.fileType == TemporaryFile { // 此次是delete操作,如果是close操作的话永久文件和目录则不需要删除
 		delete(Fsn.next, filename)
 		Fsn.nextNameCache[filename]++ // 下一次创建的时候INstanceSeq与上一次不同
 	}
@@ -155,14 +211,14 @@ func (Fsn *FileSystemNode) Acquire(InstanceSeq uint64, filename string, LockType
 		Node.nowLockType = LockType
 	} else if Node.nowLockType == ReadLock && LockType == ReadLock {
 		Node.readLockReferenceCount++
-		return Node.tockenSeq, true
+		return Node.tokenSeq, true
 	} else if Node.nowLockType == WriteLock { // 和下面分开写是为了清楚的看到所有情况
 		return 0, false
 	} else { // now readLock, args writelock
 		return 0, false
 	}
 
-	return Node.tockenSeq, true // 直接返回当前值，在release的时候加1就可以了
+	return Node.tokenSeq, true // 直接返回当前值，在release的时候加1就可以了
 }
 
 /*
@@ -170,11 +226,17 @@ func (Fsn *FileSystemNode) Acquire(InstanceSeq uint64, filename string, LockType
  * @return: 成功删除返回true，否则返回false
  * @notes: 需要检测name是否存在
  */
-func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string) bool {
-	Node ,IsExist := Fsn.next[filename]
+func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string, Tocken uint64) bool {
+	Node, IsExist := Fsn.next[filename]
 
 	if !IsExist {
 		log.Printf("INFO : %s/%s does not exist.\n", Fsn.nowPath, filename)
+		return false
+	}
+
+	// 防止落后的锁持有者删除掉现有的被其他节点持有的锁
+	if Tocken < Node.tokenSeq {
+		log.Printf("WARNING : Have a lagging client want release file(%s).\n", Node.nowPath)
 		return false
 	}
 
@@ -186,7 +248,7 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string) bool {
 	if Node.nowLockType == NotLock {
 		log.Println("WARNING : Error operation, release before acquire.")
 		return false
-	} else if Node.nowLockType == ReadLock { // TODO 但显然这种做法会使得写操作饥饿
+	} else if Node.nowLockType == ReadLock { // TODO 但显然这种做法会使得写操作可能饥饿
 		if Node.readLockReferenceCount >= 1 {
 			Node.readLockReferenceCount--
 		} else { // 显然不可能出现这种情况
@@ -198,8 +260,8 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string) bool {
 		return true
 	}
 
-	// 当前锁定类型是写锁或者读锁引用计数为0
-	Node.tockenSeq++
+	// 当前锁定类型是写锁或者读锁引用计数为0,显然当所有的读锁都解锁以后才会递增token
+	Node.tokenSeq++
 	Node.nowLockType = NotLock
 
 	return true
@@ -210,7 +272,7 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string) bool {
  * @return: 返回当前文件的instanceSeq
  * @notes: 对于一个文件来说客户端open操作可以检查某个文件是否存在,如果存在会返回一个句柄,反之返回false;
 		对于一个目录来说open可以使其获取句柄后创建文件;
- */
+*/
 func (Fsn *FileSystemNode) Open(name string) uint64 {
 	// TODO 这里应该做一些权限的检测，但是现在并没有想好如何划分权限，先不急，返回当前InstanceSeq
 
@@ -235,7 +297,7 @@ func InitRoot() *FileSystemNode {
 	root.fileName = "ChubbyCell_" + "lizhaolong"
 
 	root.instanceSeq = 0
-	root.tockenSeq = 0
+	root.tokenSeq = 0
 	root.aCLsSeq = 0
 
 	root.nowLockType = NotLock
