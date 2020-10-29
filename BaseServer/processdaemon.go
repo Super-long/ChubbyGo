@@ -19,6 +19,7 @@ package BaseServer
 
 import (
 	"log"
+	"time"
 )
 
 // TODO 目前这个结构体存在着大量的浪费情况，后面可以抽象成两个,在守护进程中使用反射解析开;不得不使用反射
@@ -31,7 +32,6 @@ type KvOp struct {
 	Clientseq int    // 这个ClientID上目前的操作数
 }
 
-// TODO 其中有很多字段互相不冲突。后面改成一个二进制的flag
 type FileOp struct {
 	Op        string // 代表单个操作的字符串open,create等一众操作
 	ClientID  uint64 // 每个Client的ID
@@ -39,11 +39,13 @@ type FileOp struct {
 
 	InstanceSeq    uint64 // 每次请求的InstanceSeq，用于判断请求是否过期
 	Token          uint64 // 锁的版本号
-	LockOrFileType int    // 锁定类型或者文件类型，反正两个不会一起用，
-	OpType         int    // Delete的操作类型
+
+	LockOrFileOrDeleteType int    // 锁定类型或者文件类型或者delete，反正三个不会一起用
+
 	FileName       string // 在open时是路径名，其他时候是文件名
 	PathName       string // 路径名称
 	CheckSum	   uint64 // 校验位
+	TimeOut		   uint32 // 加锁超时参数
 
 	// TODO 权限控制位,现在还没用,因为不确定到底该以什么形式来设置权限
 	ReadAcl   *[]uint64
@@ -130,13 +132,13 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
-									seq, checksum, flag := node.Insert(cmd.InstanceSeq, cmd.LockOrFileType, cmd.FileName, nil, nil, nil)
-									if flag {
+									seq, checksum, err := node.Insert(cmd.InstanceSeq, cmd.LockOrFileOrDeleteType, cmd.FileName, nil, nil, nil)
+									if err == nil {
 										log.Printf("INFO : [%d] Create file(%s) sucess, instanceSeq is %d, checksum is %d.\n", kv.me, cmd.FileName, seq, checksum)
 										kv.ClientInstanceSeq[cmd.ClientID] = seq
 										kv.ClientInstanceCheckSum[cmd.ClientID] = checksum
 									} else {
-										log.Printf("INFO : [%d] Create file(%s) failture\n", kv.me, cmd.FileName)
+										log.Printf("INFO : [%d] Create file(%s) failture, %s\n", kv.me, cmd.FileName, err.Error())
 									}
 								} else {
 									log.Printf("INFO : [%d] Create Not find path(%s)!\n", kv.me, cmd.PathName)
@@ -145,12 +147,12 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
-									flag := node.Delete(cmd.InstanceSeq, cmd.FileName, cmd.OpType, cmd.CheckSum)
-									if flag {
+									err := node.Delete(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileOrDeleteType, cmd.CheckSum)
+									if err == nil {
 										log.Printf("INFO : [%d] Delete file(%s) sucess.\n", kv.me, cmd.FileName)
 										kv.ClientInstanceSeq[cmd.ClientID] = 0 // 特殊的情况,我们需要一个通知机制
 									} else {
-										log.Printf("INFO : [%d] Delete file(%s) failture\n", kv.me, cmd.FileName)
+										log.Printf("INFO : [%d] Delete file(%s) failture, %s.\n", kv.me, cmd.FileName, err.Error())
 									}
 								} else {
 									log.Printf("INFO : [%d] Delete Not find path(%s)!\n", kv.me, cmd.PathName)
@@ -159,31 +161,60 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
-									seq, flag := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileType, cmd.CheckSum)
-									if flag {
+									seq, err := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileOrDeleteType, cmd.CheckSum)
+									if err == nil {
 										var LockTypeName string
-										if cmd.LockOrFileType == WriteLock {
+										if cmd.LockOrFileOrDeleteType == WriteLock {
 											LockTypeName = "WriteLock"
 										} else {
 											LockTypeName = "ReadLock"
 										}
 										kv.ClientInstanceSeq[cmd.ClientID] = seq
+										if cmd.TimeOut > 0{
+											go func() {
+												// TODO 这里其实还应该考虑数据包往返时延和双方时钟不同步的度,但是服务端大一点不影响正确性
+												time.Sleep(time.Duration(cmd.TimeOut) * time.Millisecond)
+												// TODO 显然有条件竞争 后面改这里架构的时候再说 这里是一个难点中的难点 因为kv.mu已经成了性能瓶颈了
+												// 显然这里我们需要目录的node和文件的token
+												PathNode, PathOk := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
+												fileNode, FileOk := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName+"/"+cmd.FileName]
+												if PathOk && FileOk{
+													// 全部使用最新的值保证删除成功
+													PathNode.Release(fileNode.instanceSeq, cmd.FileName, fileNode.tokenSeq, fileNode.checksum)
+												} else {
+													log.Println("ERROR : delay delete failture.")
+												}
+											}()
+										}
 										log.Printf("INFO : [%d] Acquire file(%s) sucess, locktype is %s.\n", kv.me, cmd.FileName, LockTypeName)
 									} else {
-										log.Printf("INFO : [%d] Acquire Not find path(%s)!\n", kv.me, cmd.PathName)
+										log.Printf("INFO : [%d] Acquire error (%s) -> %s!\n", kv.me, cmd.PathName, err.Error())
 									}
 								}
 							case "Release":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
-									flag := node.Release(cmd.InstanceSeq, cmd.FileName, cmd.Token, cmd.CheckSum)
-									if flag {
+									err := node.Release(cmd.InstanceSeq, cmd.FileName, cmd.Token, cmd.CheckSum)
+									if err == nil {
 										kv.ClientInstanceSeq[cmd.ClientID] = 0 // 通知机制
 										// 这里只看读锁的引用计数,如果原先是读锁这就是正确的,如果是写锁Release以后也是零,是正确的;错误的话不会进入这里
 										log.Printf("INFO : [%d] Release file(%s) sucess, this file reference count is %d\n", kv.me, cmd.FileName, node.readLockReferenceCount)
 									} else {
-										log.Printf("INFO : [%d] Release Not find path(%s)!\n", kv.me, cmd.PathName)
+										log.Printf("INFO : [%d] Release error(%s) -> %s!\n", kv.me, cmd.PathName, err.Error())
+									}
+								}
+							case "CheckToken":
+								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
+								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
+								if ok{
+									err := node.CheckToken(cmd.Token, cmd.FileName)
+									if err == nil {
+										kv.ClientInstanceSeq[cmd.ClientID] = 0 // 通知机制
+										// 这里只看读锁的引用计数,如果原先是读锁这就是正确的,如果是写锁Release以后也是零,是正确的;错误的话不会进入这里
+										log.Printf("INFO : [%d] CheckToken file(%s) sucess, this file reference count is %d\n", kv.me, cmd.FileName, node.readLockReferenceCount)
+									} else {
+										log.Printf("INFO : [%d] CheckToken error(%s) -> %s!\n", kv.me, cmd.PathName, err.Error())
 									}
 								}
 							}

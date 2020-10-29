@@ -24,10 +24,10 @@ import (
 
 type FileOperation struct {
 	pathToFileSystemNodePointer map[string]*FileSystemNode
-	root *FileSystemNode	// 根节点
+	root                        *FileSystemNode // 根节点
 }
 
-func InitFileOperation() *FileOperation{
+func InitFileOperation() *FileOperation {
 	Root := &FileOperation{}
 
 	Root.pathToFileSystemNodePointer = make(map[string]*FileSystemNode)
@@ -43,9 +43,9 @@ func InitFileOperation() *FileOperation{
 var RootFileOperation = InitFileOperation()
 
 // 其中重复代码很多不修改的原因很多地方类型都不一样,减少代码行数就需要反射,会降低可读性;
-func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error{
+func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error {
 
-	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
 		reply.Err = ConnectError
 		return nil
 	}
@@ -88,10 +88,10 @@ func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error{
 		kv.mu.Lock()
 
 		seq, ok1 := kv.ClientInstanceSeq[args.ClientID]
-		chuckSum ,ok2 := kv.ClientInstanceCheckSum[args.ClientID]
+		chuckSum, ok2 := kv.ClientInstanceCheckSum[args.ClientID]
 		if ok1 && ok2 {
 			delete(kv.ClientInstanceCheckSum, args.ClientID)
-			delete(kv.ClientInstanceSeq, args.ClientID)	// 防止后面请求没有成功却返回成功
+			delete(kv.ClientInstanceSeq, args.ClientID) // 防止后面请求没有成功却返回成功
 
 			reply.ChuckSum = chuckSum
 			reply.InstanceSeq = seq
@@ -106,9 +106,9 @@ func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error{
 	return nil
 }
 
-func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error{
+func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error {
 
-	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
 		reply.Err = ConnectError
 		return nil
 	}
@@ -128,7 +128,7 @@ func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Create", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileType: args.FileType}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileOrDeleteType: args.FileType}
 
 	log.Printf("INFO : ClientId[%d], Create : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
@@ -169,9 +169,9 @@ func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error{
 	return nil
 }
 
-func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
+func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error {
 
-	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
 		reply.Err = ConnectError
 		return nil
 	}
@@ -191,7 +191,8 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Delete", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, OpType : args.OpType, CheckSum: args.Checksum}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq,
+		LockOrFileOrDeleteType: args.OpType, CheckSum: args.Checksum}
 
 	log.Printf("INFO : ClientId[%d], Delete : pathname(%s) filename(%s) checksum(%d)\n", args.ClientID, args.PathName, args.FileName, args.Checksum)
 
@@ -215,7 +216,7 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 
 		// 对于close显然seq的设置没有什么意义,但我们需要一个通知机制
 		_, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok{
+		if ok {
 			delete(kv.ClientInstanceSeq, args.ClientID)
 		} else {
 			reply.Err = DeleteError
@@ -228,9 +229,9 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 	return nil
 }
 
-func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
+func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error {
 
-	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
 		reply.Err = ConnectError
 		return nil
 	}
@@ -250,7 +251,8 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Acquire", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileType: args.LockType, CheckSum: args.Checksum}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq,
+		LockOrFileOrDeleteType: args.LockType, CheckSum: args.Checksum, TimeOut: args.TimeOut}
 
 	log.Printf("INFO : ClientId[%d], Acquire : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
@@ -272,7 +274,7 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
 		kv.mu.Lock()
 
 		seq, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok{
+		if ok {
 			delete(kv.ClientInstanceSeq, args.ClientID)
 			reply.InstanceSeq = seq
 		} else {
@@ -286,9 +288,9 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
 	return nil
 }
 
-func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error{
+func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error {
 
-	if atomic.LoadInt32(kv.ConnectIsok) == 0{
+	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
 		reply.Err = ConnectError
 		return nil
 	}
@@ -330,11 +332,68 @@ func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error{
 		kv.mu.Lock()
 
 		_, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok{
+		if ok {
 			// 因为这个命令中seq只是一个通知机制
 			delete(kv.ClientInstanceSeq, args.ClientID)
 		} else {
 			reply.Err = ReleaseError
+		}
+		kv.mu.Unlock()
+	case <-kv.shutdownCh:
+		return nil
+	}
+
+	return nil
+}
+
+func (kv *RaftKV) CheckToken(args *CheckTokenArgs, reply *CheckTokenReply) error {
+
+	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
+		reply.Err = ConnectError
+		return nil
+	}
+
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		reply.Err = NoLeader
+		return nil
+	}
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
+	NewOperation := FileOp{Op: "CheckToken", ClientID: args.ClientID, Clientseq: args.SeqNo,
+		PathName: args.PathName, FileName: args.FileName, Token: args.Token}
+
+	log.Printf("INFO : ClientId[%d], CheckToken : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
+
+	index, term, _ := kv.rf.Start(NewOperation)
+
+	Notice := make(chan struct{})
+	kv.LogIndexNotice[index] = Notice
+	kv.mu.Unlock()
+
+	reply.Err = OK
+
+	select {
+	case <-Notice:
+		curTerm, isLeader := kv.rf.GetState()
+		if !isLeader || term != curTerm {
+			reply.Err = ReElection
+			return nil
+		}
+		kv.mu.Lock()
+
+		_, ok := kv.ClientInstanceSeq[args.ClientID]
+		if ok {
+			delete(kv.ClientInstanceSeq, args.ClientID)
+		} else {
+			reply.Err = CheckTokenError
 		}
 		kv.mu.Unlock()
 	case <-kv.shutdownCh:

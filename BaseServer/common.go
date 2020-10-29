@@ -31,6 +31,7 @@ const (
 	CreateError = "CreateError"
 	AcquireError = "AcquireError"
 	ReleaseError = "ReleaseError"
+	CheckTokenError = "CheckTokenError"
 	)
 
 // 用于Delete RPC
@@ -123,6 +124,7 @@ type AcquireArgs struct {
 	FileName string
 	LockType int
 	Checksum uint64
+	TimeOut	uint32	// 毫秒为单位
 }
 
 type AcquireReply struct {
@@ -141,5 +143,17 @@ type ReleaseArgs struct {
 }
 
 type ReleaseReply struct {
+	Err         Err
+}
+
+type CheckTokenArgs struct {
+	ClientID uint64
+	SeqNo    int
+	Token uint64
+	PathName string
+	FileName string
+}
+
+type CheckTokenReply struct {
 	Err         Err
 }

@@ -177,12 +177,12 @@ func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, op
  * @param: 实例号和路径名来源于文件描述符;文件类型;文件名称
  * @return: 返回加锁是否成功; TODO 后面可以在clerk写两个函数，其中一个只传递一个fd，最后解析一手就ok
  */
-func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, LockType int, checksum uint64) (bool, uint64) {
+func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, LockType int, checksum uint64, timeout uint32) (bool, uint64) {
 	cnt := len(ck.servers)
 
 	for {
 		args := &AcquireArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
-			InstanceSeq: instanceseq, FileName: filename, LockType: LockType, Checksum: checksum}
+			InstanceSeq: instanceseq, FileName: filename, LockType: LockType, Checksum: checksum, TimeOut: timeout}
 
 		reply := new(AcquireReply)
 
@@ -263,6 +263,54 @@ func (ck *Clerk) Release(pathname string, filename string, instanceseq uint64, t
 				return true
 			} else if reply.Err == ReleaseError || reply.Err == Duplicate{
 				log.Printf("INFO : Release (%s/%s) error -> [%s]\n", pathname, filename, reply.Err)
+				ck.seq++
+				return false
+			}
+			ck.leader++
+		}
+	}
+}
+
+/*
+ * @brief: 附带着目前持有的token，检测这个token是否还有效
+ * @notes: 问题的关键在于检查返回无效，其实在发出数据的一刻是有效的，但是不影响正确性
+ */
+func (ck *Clerk) CheckToken(pathname string, filename string, token uint64) bool {
+	cnt := len(ck.servers)
+
+	for {
+		args := &CheckTokenArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
+			 FileName: filename, Token: token}
+
+		reply := new(CheckTokenReply)
+
+		ck.leader %= cnt
+
+		if atomic.LoadInt32(&((*ck.serversIsOk)[ck.leader])) == 0 {
+			ck.leader++
+			continue
+		}
+
+		replyArrival := make(chan bool, 1)
+		go func() {
+			err := ck.servers[ck.leader].Call("RaftKV.CheckToken", args, reply)
+			flag := true
+			if err != nil {
+				log.Fatal(err.Error())
+				flag = false
+			}
+			replyArrival <- flag
+		}()
+		select {
+		case <-time.After(200 * time.Millisecond):
+			ck.leader++
+			continue
+		case ok := <-replyArrival:
+			if ok && (reply.Err == OK) {
+				ck.seq++
+				return true
+			} else if reply.Err == CheckTokenError || reply.Err == Duplicate{
+				log.Printf("INFO : CheckToken (%s/%s) error -> [%s]\n", pathname, filename, reply.Err)
 				ck.seq++
 				return false
 			}

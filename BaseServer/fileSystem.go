@@ -37,6 +37,32 @@ const (
 	WriteLock
 )
 
+type ChubbyGoFileSystemError int8
+
+const (
+	PathError = iota
+	CheckSumError
+	InstanceSeqError
+	DoesNotSupportRecursiveDeletion
+	CannotDeleteFilesWithZeroReferenceCount
+	LockTypeError
+	ReleaseBeforeAcquire
+	OnlyDirectoriesCanCreateFiles
+	TokenSeqError
+)
+
+func (err ChubbyGoFileSystemError) Error() string{
+	var ans string
+	switch err {
+	case PathError:
+		ans = "Connection to a target server greater than or equal to timeout."
+		break
+	default:
+
+	}
+	return ans
+}
+
 type FileSystemNode struct {
 	// 在此文件下创建新文件时要传入的参数
 	fileType   int       // 三种文件类型; 不支持链接文件
@@ -125,20 +151,20 @@ func (Fsn *FileSystemNode) makeCheckSum() uint64 {
  * @return: 插入正确返回true;否则返回false
  * @notes: 文件被创建的时候默认打开,即引用计数为1,能够插入文件证明客户端的InstanceSeq是目录的
  */
-func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, ReadAcl *[]uint64, WriteAcl *[]uint64, ModifyAcl *[]uint64) (uint64, uint64, bool) {
+func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, ReadAcl *[]uint64, WriteAcl *[]uint64, ModifyAcl *[]uint64) (uint64, uint64, error) {
 	if InstanceSeq < Fsn.instanceSeq {
-		return 0, 0, false
+		return 0, 0, ChubbyGoFileSystemError(InstanceSeqError)
 	}
 
 	if Fsn.fileType != Directory { // 仅目录允许创建新文件
-		return 0, 0, false
+		return 0, 0, ChubbyGoFileSystemError(OnlyDirectoriesCanCreateFiles)
 	}
 
 	// TODO 忘记加文件名称解析了，可能被字符串攻击
 	// 目录与文件不可以重名
 	_, IsExist := Fsn.next[name]
 	if IsExist { // Fsn中存在着与这个文件文件名相同的文件
-		return 0, 0, false
+		return 0, 0, ChubbyGoFileSystemError(PathError)
 	}
 
 	NewNode := &FileSystemNode{}
@@ -169,7 +195,7 @@ func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, Rea
 
 	RootFileOperation.pathToFileSystemNodePointer[NewNode.nowPath] = NewNode
 
-	return NewNode.instanceSeq, NewNode.checksum, true
+	return NewNode.instanceSeq, NewNode.checksum, nil
 }
 
 /*
@@ -177,31 +203,31 @@ func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, Rea
  * @return: 成功删除返回true，否则返回false
  * @notes: 需要检测name是否存在;
  */
-func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType int, checkSum uint64) bool {
+func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType int, checkSum uint64) error {
 	Node, IsExist := Fsn.next[filename]
 	if !IsExist {
 		log.Printf("INFO : %s/%s does not exist.\n", Fsn.nowPath, filename)
-		return false
+		return ChubbyGoFileSystemError(PathError)
 	}
 
 	if checkSum != Node.checksum {
 		log.Printf("WARNING : A danger requirment, unmatched checksum, now(%d) -> client(%d).\n", Node.checksum, checkSum)
-		return false
+		return ChubbyGoFileSystemError(CheckSumError)
 	}
 
 	if InstanceSeq < Node.instanceSeq {
 		log.Println("WARNING : Delete -> Request from a backward file descriptor!")
-		return false
+		return ChubbyGoFileSystemError(InstanceSeqError)
 	}
 
 	if Node.fileType == Directory && len(Fsn.next) != 0 {
 		log.Println("WARNING : Recursive deletion of files is currently not allowed!")
-		return false // TODO 目前不支持这种递归删除，因为下面文件可能还持有锁，这个后面再说
+		return ChubbyGoFileSystemError(DoesNotSupportRecursiveDeletion) // TODO 目前不支持这种递归删除，因为下面文件可能还持有锁，这个后面再说
 	}
 
 	if Node.OpenReferenceCount <= 0 {
 		log.Printf("ERROR : Delete a file(%s/%s) that referenceCount is zero.\n", Fsn.nowPath, filename)
-		return false
+		return ChubbyGoFileSystemError(CannotDeleteFilesWithZeroReferenceCount)
 	}
 
 	Node.OpenReferenceCount--
@@ -209,7 +235,7 @@ func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType in
 	// close :引用计数为零时只有临时文件会被删除，永久文件和目录文件都不会被删除
 	// delete: 相反
 	if Node.OpenReferenceCount != 0 {
-		return true // delete成功，其实只是把客户端的句柄消除掉而已
+		return nil // delete成功，其实只是把客户端的句柄消除掉而已
 	}
 
 	// name存在,引用计数为零且与远端InstanceSeq相等，可以执行删除
@@ -221,7 +247,7 @@ func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType in
 	// 当文件的引用计数为零的时候更新Checksum,也就说下一次打开时得到的句柄是不一样的,可以有效防止客户端伪造checkSum
 	Node.checksum = Node.makeCheckSum()
 
-	return true
+	return nil
 }
 
 /*
@@ -229,22 +255,22 @@ func (Fsn *FileSystemNode) Delete(InstanceSeq uint64, filename string, opType in
  * @return: 成功删除返回true，否则返回false
  * @notes: 需要检测name是否存在; 调用方先判断bool再看seq
  */
-func (Fsn *FileSystemNode) Acquire(InstanceSeq uint64, filename string, locktype int, checksum uint64) (uint64, bool) {
+func (Fsn *FileSystemNode) Acquire(InstanceSeq uint64, filename string, locktype int, checksum uint64) (uint64, error) {
 	Node, IsExist := Fsn.next[filename]
 
 	if !IsExist {
 		log.Printf("INFO : %s/%s does not exist.\n", Fsn.nowPath, filename)
-		return 0, false
+		return 0, ChubbyGoFileSystemError(PathError)
 	}
 
 	if checksum != Node.checksum {
 		log.Printf("WARNING : A danger requirment, unmatched checksum, now(%d) -> client(%d).\n", checksum, Node.checksum)
-		return 0, false
+		return 0, ChubbyGoFileSystemError(CheckSumError)
 	}
 
 	if InstanceSeq < Node.instanceSeq {
 		log.Println("WARNING : Acquire -> Request from a backward file descriptor!")
-		return 0, false
+		return 0, ChubbyGoFileSystemError(InstanceSeqError)
 	}
 
 	if Node.nowLockType == NotLock {
@@ -254,14 +280,14 @@ func (Fsn *FileSystemNode) Acquire(InstanceSeq uint64, filename string, locktype
 		Node.nowLockType = locktype
 	} else if Node.nowLockType == ReadLock && locktype == ReadLock {
 		Node.readLockReferenceCount++
-		return Node.tokenSeq, true
+		return Node.tokenSeq, nil
 	} else if Node.nowLockType == WriteLock { // 和下面分开写是为了清楚的看到所有情况
-		return 0, false
+		return 0, ChubbyGoFileSystemError(LockTypeError)
 	} else { // now readLock, args writelock
-		return 0, false
+		return 0, ChubbyGoFileSystemError(LockTypeError)
 	}
 
-	return Node.tokenSeq, true // 直接返回当前值，在release的时候加1就可以了
+	return Node.tokenSeq, nil // 直接返回当前值，在release的时候加1就可以了
 }
 
 /*
@@ -269,33 +295,33 @@ func (Fsn *FileSystemNode) Acquire(InstanceSeq uint64, filename string, locktype
  * @return: 成功删除返回true，否则返回false
  * @notes: 需要检测name是否存在
  */
-func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string, Token uint64, checksum uint64) bool {
+func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string, Token uint64, checksum uint64) error {
 	Node, IsExist := Fsn.next[filename]
 
 	if !IsExist {
 		log.Printf("INFO : %s/%s does not exist.\n", Fsn.nowPath, filename)
-		return false
+		return ChubbyGoFileSystemError(PathError)
 	}
 
 	if checksum != Node.checksum {
 		log.Printf("WARNING : A danger requirment, unmatched checksum, now(%d) -> client(%d).\n", checksum, Node.checksum)
-		return false
+		return ChubbyGoFileSystemError(CheckSumError)
 	}
 
 	// 防止落后的锁持有者删除掉现有的被其他节点持有的锁
 	if Token < Node.tokenSeq {
-		log.Printf("WARNING : Have a lagging client want release file(%s).\n", Node.nowPath)
-		return false
+		log.Printf("WARNING : Have a lagging client want release file(%s) now(%d) clientSeq(%d).\n", Node.nowPath, Token, Node.tokenSeq)
+		return ChubbyGoFileSystemError(TokenSeqError)
 	}
 
 	if InstanceSeq < Node.instanceSeq {
 		log.Println("WARNING : Release -> Request from a backward file descriptor!")
-		return false
+		return ChubbyGoFileSystemError(InstanceSeqError)
 	}
 
 	if Node.nowLockType == NotLock {
 		log.Println("WARNING : Error operation, release before acquire.")
-		return false
+		return ChubbyGoFileSystemError(ReleaseBeforeAcquire)
 	} else if Node.nowLockType == ReadLock { // TODO 但显然这种做法会使得写操作可能饥饿
 		if Node.readLockReferenceCount >= 1 {
 			Node.readLockReferenceCount--
@@ -305,14 +331,14 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string, Token ui
 	}
 
 	if Node.readLockReferenceCount > 0 {
-		return true
+		return nil
 	}
 
 	// 当前锁定类型是写锁或者读锁引用计数为0,显然当所有的读锁都解锁以后才会递增token
 	Node.tokenSeq++
 	Node.nowLockType = NotLock
 
-	return true
+	return nil
 }
 
 /*
@@ -359,6 +385,21 @@ func InitRoot() *FileSystemNode {
 		RootFileOperation.pathToFileSystemNodePointer[root.nowPath] = root*/
 
 	return root
+}
+
+func (Fsn *FileSystemNode) CheckToken(token uint64, filename string) error{
+	Node, IsExist := Fsn.next[filename]
+
+	if !IsExist {
+		log.Printf("INFO : %s/%s does not exist.\n", Fsn.nowPath, filename)
+		return ChubbyGoFileSystemError(PathError)
+	}
+
+	if Node.tokenSeq == token{
+		return nil
+	} else {
+		return ChubbyGoFileSystemError(TokenSeqError)
+	}
 }
 
 /*

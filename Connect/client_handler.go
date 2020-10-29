@@ -303,8 +303,8 @@ func (cfg *ClientConfig) Open(pathname string) (bool, *BaseServer.FileDescriptor
 	return cfg.clk.Open(pathname)
 }
 
-func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, Type int, filename string) (bool, *BaseServer.FileDescriptor) {
-	return cfg.clk.Create(fd, Type, filename)
+func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, fileType int, filename string) (bool, *BaseServer.FileDescriptor) {
+	return cfg.clk.Create(fd, fileType, filename)
 }
 
 func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, opType int) bool {
@@ -313,7 +313,7 @@ func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, opType int) bool 
 	return cfg.clk.Delete(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, opType, fd.ChuckSum)
 }
 
-func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int) (bool, uint64) {
+func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int, Timeout uint32) (bool, uint64) {
 	index := strings.LastIndex(fd.PathName, "/")
 
 	RemainPath := fd.PathName[0:index]
@@ -322,12 +322,26 @@ func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int) (b
 		return false, 0
 	}
 
-	return cfg.clk.Acquire(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, LockType, fd.ChuckSum)
+	return cfg.clk.Acquire(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, LockType, fd.ChuckSum, Timeout)
 }
 
 func (cfg *ClientConfig) Release(fd *BaseServer.FileDescriptor, token uint64) bool {
 	index := strings.LastIndex(fd.PathName, "/")
 	return cfg.clk.Release(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, token, fd.ChuckSum)
+}
+
+/*
+ * @param: 给出文件名和手中持有的token，返回**此时刻**token是否有效
+ * @brief:
+ * 可以传入绝对路径和相对路径，也不能叫相对路径
+ */
+func (cfg *ClientConfig) CheckToken(AbsolutePath string, token uint64) bool {
+	index := strings.LastIndex(AbsolutePath, "/")
+	return cfg.clk.CheckToken(AbsolutePath[0:index], AbsolutePath[index+1:], token)
+}
+
+func (cfg *ClientConfig) CheckTokenAt(pathname string, filename string, token uint64) bool{
+	return cfg.clk.CheckToken(pathname, filename, token)
 }
 
 // --------------------------

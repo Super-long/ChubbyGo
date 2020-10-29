@@ -14,18 +14,18 @@ import (
  */
 
 func main() {
-	n := 10	// n大于零
+	n := 10 // n大于零
 	Sem := make(Connect.Semaphore, n-1)
 	SemNumber := 0
 
-	clientConfigs := make([]*Connect.ClientConfig,n)
+	clientConfigs := make([]*Connect.ClientConfig, n)
 	for i := 0; i < n; i++ {
 		clientConfigs[i] = Connect.CreateClient()
 		err := clientConfigs[i].StartClient()
 		if err != nil {
 			log.Println(err.Error())
 		} else {
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*3))
+			clientConfigs[i].SetUniqueFlake(uint64(i + n*3))
 		}
 	}
 
@@ -38,9 +38,9 @@ func main() {
 
 	filename := "text.txt"
 	// 在打开的文件夹下创建文件
-	flag, fileFd := clientConfigs[0].Create(fd, BaseServer.PermanentFile,filename)
+	flag, fileFd := clientConfigs[0].Create(fd, BaseServer.PermanentFile, filename)
 	if flag {
-		fmt.Printf("Create file(%s) sucess, instanceSeq is %d\n", filename,fileFd.InstanceSeq)
+		fmt.Printf("Create file(%s) sucess, instanceSeq is %d\n", filename, fileFd.InstanceSeq)
 	} else {
 		fmt.Printf("Create Error!")
 
@@ -55,20 +55,20 @@ func main() {
 	}
 
 	// 多个协程只有一个能获取写锁成功,当然这并不是绝对的;这里会有N-1个协程进入
-	for i := 1; i < n; i++{
+	for i := 1; i < n; i++ {
 		SemNumber++
-		go func (index int){
+		go func(index int) {
 			defer Sem.P(1)
-			flag ,Fd := clientConfigs[index].Open("/ls/ChubbyCell_lizhaolong/text.txt")
+			flag, Fd := clientConfigs[index].Open("/ls/ChubbyCell_lizhaolong/text.txt")
 			if flag {
 				fmt.Printf("Get fd sucess, instanceSeq is %d, checksum is %d.\n", Fd.InstanceSeq, Fd.ChuckSum)
 			} else {
 				fmt.Println("Error!")
 			}
 
-			time.Sleep(1*time.Second)
+			time.Sleep(1 * time.Second)
 
-			Isok, token := clientConfigs[index].Acquire(Fd, BaseServer.WriteLock)
+			Isok, token := clientConfigs[index].Acquire(Fd, BaseServer.WriteLock, 0)
 			if Isok {
 				fmt.Printf("Acquire (%s) sucess, Tocken is %d\n", filename, token)
 				//time.Sleep(1*time.Second)
@@ -98,7 +98,7 @@ func main() {
 	fmt.Println("----------------------------------------------")
 
 	// 使用0号客户端再次请求锁,得到的token应该为1
-	Isok, token := clientConfigs[0].Acquire(fileFd, BaseServer.WriteLock)
+	Isok, token := clientConfigs[0].Acquire(fileFd, BaseServer.WriteLock, 0)
 	if Isok {
 		fmt.Printf("Acquire (%s) sucess, Token is %d\n", filename, token)
 		//time.Sleep(1*time.Second)
@@ -116,11 +116,11 @@ func main() {
 	fmt.Println("----------------------------------------------")
 	SemNumber = 0
 
-	for i := 1; i < n; i++{
+	for i := 1; i < n; i++ {
 		SemNumber++
-		go func (index int){
+		go func(index int) {
 			defer Sem.P(1)
-			flag ,Fd := clientConfigs[index].Open("/ls/ChubbyCell_lizhaolong/text.txt")
+			flag, Fd := clientConfigs[index].Open("/ls/ChubbyCell_lizhaolong/text.txt")
 			if flag {
 				fmt.Printf("Get fd sucess, instanceSeq is %d, checksum is %d.\n", Fd.InstanceSeq, Fd.ChuckSum)
 			} else {
@@ -130,13 +130,13 @@ func main() {
 			var Isok bool
 			var token uint64
 
-			time.Sleep(1*time.Second)
+			time.Sleep(1 * time.Second)
 
 			// 读锁先抢到就是4个sucess; 写锁抢到就是1个sucess
-			if index&1 == 0{
-				Isok, token =  clientConfigs[index].Acquire(Fd, BaseServer.ReadLock)
+			if index&1 == 0 {
+				Isok, token = clientConfigs[index].Acquire(Fd, BaseServer.ReadLock, 0)
 			} else {
-				Isok, token =  clientConfigs[index].Acquire(Fd, BaseServer.WriteLock)
+				Isok, token = clientConfigs[index].Acquire(Fd, BaseServer.WriteLock, 0)
 			}
 
 			if Isok {
