@@ -310,7 +310,7 @@ func (cfg *ClientConfig) Create(fd *BaseServer.FileDescriptor, Type int, filenam
 func (cfg *ClientConfig) Delete(fd *BaseServer.FileDescriptor, opType int) bool {
 	index := strings.LastIndex(fd.PathName, "/")
 
-	return cfg.clk.Delete(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, opType)
+	return cfg.clk.Delete(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, opType, fd.ChuckSum)
 }
 
 func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int) (bool, uint64) {
@@ -322,12 +322,12 @@ func (cfg *ClientConfig) Acquire(fd *BaseServer.FileDescriptor, LockType int) (b
 		return false, 0
 	}
 
-	return cfg.clk.Acquire(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, LockType)
+	return cfg.clk.Acquire(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, LockType, fd.ChuckSum)
 }
 
 func (cfg *ClientConfig) Release(fd *BaseServer.FileDescriptor, token uint64) bool {
 	index := strings.LastIndex(fd.PathName, "/")
-	return cfg.clk.Release(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, token)
+	return cfg.clk.Release(fd.PathName[0:index], fd.PathName[index+1:], fd.InstanceSeq, token, fd.ChuckSum)
 }
 
 // --------------------------

@@ -24,29 +24,27 @@ func main(){
 		fmt.Printf("Error!")
 	}
 
-	// TODO 显然这个文件描述符很容易被伪造，可以根据clientID在对端加密
-	//		我们可以使用句柄加锁，解锁，改变ACL，ACL目前还没有定义好
 	filename := "text.txt"
 	// 在打开的文件夹下创建文件
 	ok, fileFd := clientConfigs.Create(fd, BaseServer.PermanentFile,filename)
 	if ok {
-		fmt.Printf("Create file(%s) sucess, instanceSeq is %d\n", filename,fileFd.InstanceSeq)
+		fmt.Printf("Create file(%s) sucess, instanceSeq is %d, checksum is %d.\n", filename,fileFd.InstanceSeq, fileFd.ChuckSum)
 	} else {
 		fmt.Printf("Create Error!")
 	}
 
 	// 删除句柄,注意句柄仅由create创建，delete删除
-	ok = clientConfigs.Delete(fd, BaseServer.Opdelete)
+	ok = clientConfigs.Delete(fileFd, BaseServer.Opdelete)
 	if ok {
-		fmt.Printf("Close file(%s) sucess\n", filename)
+		fmt.Printf("Delete file(%s) sucess\n", filename)
 	} else {
-		fmt.Printf("Close Error!")
+		fmt.Printf("Delete Error!")
 	}
 
 	// 第二次创建文件,返回的instanceSeq为1
 	ok, fileFd = clientConfigs.Create(fd, BaseServer.PermanentFile,filename)
 	if ok {
-		fmt.Printf("Create file(%s) sucess, instanceSeq is %d\n", filename, fileFd.InstanceSeq)
+		fmt.Printf("Create file(%s) sucess, instanceSeq is %d, checksum is %d.\n", filename, fileFd.InstanceSeq, fileFd.ChuckSum)
 	} else {
 		fmt.Printf("Create Error!")
 	}
@@ -73,6 +71,13 @@ func main(){
 		fmt.Printf("release (%s) sucess.\n", filename)
 	} else {
 		fmt.Printf("Release Error!")
+	}
+
+	ok = clientConfigs.Delete(fileFd, BaseServer.Opdelete)
+	if ok {
+		fmt.Printf("Delete file(%s) sucess\n", filename)
+	} else {
+		fmt.Printf("Delete Error!")
 	}
 
 	return

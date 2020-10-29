@@ -59,7 +59,7 @@ func (ck *Clerk) Open(pathname string) (bool,*FileDescriptor) {
 		case ok := <-replyArrival:
 			if ok && (reply.Err == OK) {
 				ck.seq++
-				return true, &FileDescriptor{reply.InstanceSeq, pathname}
+				return true, &FileDescriptor{reply.ChuckSum, reply.InstanceSeq, pathname}
 			} else if reply.Err == OpenError || reply.Err == Duplicate{
 				// 对端打开文件失败
 				log.Printf("INFO : Open file(%s) error -> [%s]\n", pathname, reply.Err)
@@ -110,7 +110,7 @@ func (ck *Clerk) Create(fd *FileDescriptor, Type int, filename string) (bool, *F
 		case ok := <-replyArrival:
 			if ok && (reply.Err == OK) {
 				ck.seq++
-				return true, &FileDescriptor{reply.InstanceSeq, fd.PathName + "/" + filename}
+				return true, &FileDescriptor{reply.CheckSum, reply.InstanceSeq, fd.PathName + "/" + filename}
 			} else if reply.Err == CreateError || reply.Err == Duplicate{
 				// 对端打开文件失败
 				log.Printf("INFO : Create (%s/%s) error -> [%s]\n", fd.PathName, filename, reply.Err)
@@ -125,12 +125,14 @@ func (ck *Clerk) Create(fd *FileDescriptor, Type int, filename string) (bool, *F
 /*
  * @param: opType为操作类型，可以为delete或者close
  */
-func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, opType int) bool {
+func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, opType int, checkSum uint64) bool {
 	cnt := len(ck.servers)
 
 	for {
 		args := &CloseArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
-			InstanceSeq: instanceseq, FileName: filename, opType: opType}
+			InstanceSeq: instanceseq, FileName: filename, OpType: opType, Checksum: checkSum}
+
+		//log.Printf("DEBUG : args.checkSum %d.\n", args.Checksum)
 
 		reply := new(CloseReply)
 
@@ -142,6 +144,7 @@ func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, op
 		}
 
 		replyArrival := make(chan bool, 1)
+
 		go func() {
 			err := ck.servers[ck.leader].Call("RaftKV.Delete", args, reply)
 			flag := true
@@ -174,12 +177,12 @@ func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, op
  * @param: 实例号和路径名来源于文件描述符;文件类型;文件名称
  * @return: 返回加锁是否成功; TODO 后面可以在clerk写两个函数，其中一个只传递一个fd，最后解析一手就ok
  */
-func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, LockType int) (bool, uint64) {
+func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, LockType int, checksum uint64) (bool, uint64) {
 	cnt := len(ck.servers)
 
 	for {
 		args := &AcquireArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
-			InstanceSeq: instanceseq, FileName: filename, LockType: LockType}
+			InstanceSeq: instanceseq, FileName: filename, LockType: LockType, Checksum: checksum}
 
 		reply := new(AcquireReply)
 
@@ -224,12 +227,12 @@ func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, L
  * @param: 路径名和文件名来源于文件描述符;instanceseq号;tocken号
  * @return: 返回解锁是否成功;
  */
-func (ck *Clerk) Release(pathname string, filename string, instanceseq uint64, token uint64) bool {
+func (ck *Clerk) Release(pathname string, filename string, instanceseq uint64, token uint64, checksum uint64) bool {
 	cnt := len(ck.servers)
 
 	for {
 		args := &ReleaseArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
-			InstanceSeq: instanceseq, FileName: filename, Token: token}
+			InstanceSeq: instanceseq, FileName: filename, Token: token, CheckSum: checksum}
 
 		reply := new(ReleaseReply)
 

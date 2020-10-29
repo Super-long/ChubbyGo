@@ -33,6 +33,11 @@ type LatestReply struct {
 	Value string // 之所以get不直接从db中取是因为取时的最新值不一定是读时的最新值，我们需要一个严格有序的操作序列
 }
 
+type fileSystemNoticeTableEntry struct {
+	instacne uint64
+	checksum uint64
+}
+
 type RaftKV struct {
 	mu      sync.Mutex
 	me      uint64
@@ -47,7 +52,11 @@ type RaftKV struct {
 	snapshotIndex int								// 现在日志上哪一个位置以前都已经是快照了，包括这个位置
 	KvDictionary            map[string]string		// 字典
 	ClientSeqCache 			map[int64]*LatestReply	// 用作判断当前请求是否已经执行过
-	ClientInstanceSeq		map[uint64]uint64		// 用作返回给客户端的InstanceSeq
+
+	// 以下两项均作为通知机制
+	ClientInstanceSeq		map[uint64]uint64	// 用作返回给客户端的InstanceSeq
+	// 仅用于Open操作
+	ClientInstanceCheckSum	map[uint64]uint64	// 用作返回给客户端的CheckSum
 
 	shutdownCh chan struct{}
 
@@ -230,6 +239,7 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 
 	kv.KvDictionary = make(map[string]string)
 	kv.ClientInstanceSeq = make(map[uint64]uint64)
+	kv.ClientInstanceCheckSum = make(map[uint64]uint64)
 	kv.LogIndexNotice = make(map[int]chan struct{})
 	kv.persist = persister
 

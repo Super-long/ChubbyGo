@@ -72,13 +72,16 @@ type OpenArgs struct {
 
 type OpenReply struct {
 	Err         Err
+	ChuckSum uint64
 	InstanceSeq uint64
 }
 
 /*
  * @brief: open每次结束以后如果成功会返回一个文件描述符，从而进行后面的操作，这样抽象就很符合人的使用逻辑
+ * @notes: 目前全部搞成public是为了调试方便
  */
 type FileDescriptor struct {
+	ChuckSum uint64
 	InstanceSeq uint64
 	PathName string
 }
@@ -95,6 +98,7 @@ type CreateArgs struct {
 type CreateReply struct {
 	Err         Err
 	InstanceSeq uint64
+	CheckSum uint64
 }
 
 type CloseArgs struct {
@@ -103,7 +107,8 @@ type CloseArgs struct {
 	InstanceSeq uint64
 	PathName string
 	FileName string
-	opType	int
+	OpType	int
+	Checksum uint64
 }
 
 type CloseReply struct {
@@ -117,6 +122,7 @@ type AcquireArgs struct {
 	PathName string
 	FileName string
 	LockType int
+	Checksum uint64
 }
 
 type AcquireReply struct {
@@ -131,6 +137,7 @@ type ReleaseArgs struct {
 	PathName string
 	FileName string
 	Token	uint64
+	CheckSum uint64
 }
 
 type ReleaseReply struct {

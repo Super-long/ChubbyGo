@@ -25,7 +25,7 @@ func main() {
 		if err != nil {
 			log.Println(err.Error())
 		} else {
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*2))
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*3))
 		}
 	}
 
@@ -61,7 +61,7 @@ func main() {
 			defer Sem.P(1)
 			flag ,Fd := clientConfigs[index].Open("/ls/ChubbyCell_lizhaolong/text.txt")
 			if flag {
-				fmt.Printf("Get fd sucess, instanceSeq is %d\n", Fd.InstanceSeq)
+				fmt.Printf("Get fd sucess, instanceSeq is %d, checksum is %d.\n", Fd.InstanceSeq, Fd.ChuckSum)
 			} else {
 				fmt.Println("Error!")
 			}
@@ -122,7 +122,7 @@ func main() {
 			defer Sem.P(1)
 			flag ,Fd := clientConfigs[index].Open("/ls/ChubbyCell_lizhaolong/text.txt")
 			if flag {
-				fmt.Printf("Get fd sucess, instanceSeq is %d\n", Fd.InstanceSeq)
+				fmt.Printf("Get fd sucess, instanceSeq is %d, checksum is %d.\n", Fd.InstanceSeq, Fd.ChuckSum)
 			} else {
 				fmt.Println("Error!")
 			}

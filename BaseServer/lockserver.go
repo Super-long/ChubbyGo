@@ -34,7 +34,7 @@ func InitFileOperation() *FileOperation{
 
 	Root.root = InitRoot()
 
-	log.Printf("DEBUG : Current pathname is %s\n", Root.root.nowPath)
+	//log.Printf("DEBUG : Current pathname is %s\n", Root.root.nowPath)
 
 	return Root
 }
@@ -87,9 +87,13 @@ func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error{
 		}
 		kv.mu.Lock()
 
-		seq, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok{
+		seq, ok1 := kv.ClientInstanceSeq[args.ClientID]
+		chuckSum ,ok2 := kv.ClientInstanceCheckSum[args.ClientID]
+		if ok1 && ok2 {
+			delete(kv.ClientInstanceCheckSum, args.ClientID)
 			delete(kv.ClientInstanceSeq, args.ClientID)	// 防止后面请求没有成功却返回成功
+
+			reply.ChuckSum = chuckSum
 			reply.InstanceSeq = seq
 		} else {
 			reply.Err = OpenError
@@ -146,9 +150,13 @@ func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error{
 		}
 		kv.mu.Lock()
 
-		seq, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok{
+		seq, ok1 := kv.ClientInstanceSeq[args.ClientID]
+		checksum, ok2 := kv.ClientInstanceCheckSum[args.ClientID]
+		if ok1 && ok2 {
 			delete(kv.ClientInstanceSeq, args.ClientID)
+			delete(kv.ClientInstanceCheckSum, args.ClientID)
+
+			reply.CheckSum = checksum
 			reply.InstanceSeq = seq
 		} else {
 			reply.Err = CreateError
@@ -183,9 +191,9 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Delete", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, OpType : args.opType}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, OpType : args.OpType, CheckSum: args.Checksum}
 
-	log.Printf("INFO : ClientId[%d], Delete : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
+	log.Printf("INFO : ClientId[%d], Delete : pathname(%s) filename(%s) checksum(%d)\n", args.ClientID, args.PathName, args.FileName, args.Checksum)
 
 	index, term, _ := kv.rf.Start(NewOperation)
 	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
@@ -242,7 +250,7 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Acquire", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileType: args.LockType}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileType: args.LockType, CheckSum: args.Checksum}
 
 	log.Printf("INFO : ClientId[%d], Acquire : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
@@ -300,7 +308,7 @@ func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error{
 	}
 
 	NewOperation := FileOp{Op: "Release", ClientID: args.ClientID, Clientseq: args.SeqNo,
-		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, Token: args.Token}
+		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, Token: args.Token, CheckSum: args.CheckSum}
 
 	log.Printf("INFO : ClientId[%d], Release : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
