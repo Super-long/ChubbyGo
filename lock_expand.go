@@ -1,9 +1,9 @@
 package main
 
 import (
-	"HummingbirdDS/BaseServer"
-	_ "HummingbirdDS/Config"
-	"HummingbirdDS/Connect"
+	"ChubbyGo/BaseServer"
+	_ "ChubbyGo/Config"
+	"ChubbyGo/Connect"
 	"fmt"
 	"log"
 	"time"
@@ -97,7 +97,7 @@ func main() {
 
 	fmt.Println("----------------------------------------------")
 
-	// 使用0号客户端再次请求锁,得到的token应该为1
+	// 使用0号客户端再次请求锁,得到的token应该为3,设计原因,起始token设置为2
 	Isok, token := clientConfigs[0].Acquire(fileFd, BaseServer.WriteLock, 0)
 	if Isok {
 		fmt.Printf("Acquire (%s) sucess, Token is %d\n", filename, token)

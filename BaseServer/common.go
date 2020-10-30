@@ -40,6 +40,11 @@ const (
 	Opclose	// 当引用计数为零时不删除永久文件/目录
 )
 
+const(
+	NoticeErrorValue = 0
+	NoticeSucess = 1
+)
+
 type Err string
 
 type PutAppendArgs struct {

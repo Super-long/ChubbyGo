@@ -18,7 +18,7 @@
 package Raft
 
 import (
-	"HummingbirdDS/Persister"
+	"ChubbyGo/Persister"
 	"bytes"
 	"encoding/gob"
 	"fmt"
@@ -506,6 +506,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 		rf.persist()
 	}
+
+	// 临界区内打日志，有点蠢
 	// log.Printf("INFO : [%d] client add a new entry (index:%d-command%v)\n", rf.me, index, command)
 
 	return index, term, isLeader
@@ -879,6 +881,7 @@ func MakeRaftInit(me uint64,
 
 /*
  * @brief: 用于在日志超过阈值时进行日志压缩，由kv层调用,index之前已经生成快照了
+ * @notes: 由raft的锁保护，不需要放在kvraft的临界区内
  */
 func (rf *Raft) CreateSnapshots(index int) {
 	rf.mu.Lock()

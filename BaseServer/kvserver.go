@@ -18,8 +18,8 @@
 package BaseServer
 
 import (
-	"HummingbirdDS/Persister"
-	"HummingbirdDS/Raft"
+	"ChubbyGo/Persister"
+	"ChubbyGo/Raft"
 	"bytes"
 	"encoding/gob"
 	"log"
@@ -53,10 +53,10 @@ type RaftKV struct {
 	KvDictionary            map[string]string		// 字典
 	ClientSeqCache 			map[int64]*LatestReply	// 用作判断当前请求是否已经执行过
 
-	// 以下两项均作为通知机制
-	ClientInstanceSeq		map[uint64]uint64	// 用作返回给客户端的InstanceSeq
+	// 以下两项均作为通知机制;注意,协商以0为无效值,这样可以避免读取时锁的使用,ClientInstanceSeq用作instance和token
+	ClientInstanceSeq		map[uint64]chan uint64	// 用作返回给客户端的InstanceSeq
 	// 仅用于Open操作
-	ClientInstanceCheckSum	map[uint64]uint64	// 用作返回给客户端的CheckSum
+	ClientInstanceCheckSum	map[uint64]chan uint64	// 用作返回给客户端的CheckSum
 
 	shutdownCh chan struct{}
 
@@ -97,23 +97,26 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 		return nil
 	}
 
+	NewOperation := KvOp{Key: args.Key, Op: "Get", ClientID: args.ClientID, Clientseq: args.SeqNo}
+
+	Notice := make(chan struct{})
+
+	log.Printf("INFO : ClientId[%d], GET:key(%s)\n", args.ClientID,args.Key)
+
 	kv.mu.Lock()
 	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(GET -> key(%s)) is repeated.\n", args.ClientID, args.Key)
 			reply.Err = Duplicate
 			reply.Value = dup.Value
 			return nil
 		}
 	}
 
-	NewOperation := KvOp{Key: args.Key, Op: "Get", ClientID: args.ClientID, Clientseq: args.SeqNo}
-
-	log.Printf("INFO : ClientId[%d], GET:key(%s)\n", args.ClientID,args.Key)
-
+	// raft本身就有锁,放在临界区内的原因是我们必须要得到index,而start必须在检测clientSeqCache之后,好在Start没有阻塞函数
 	index, term, _ := kv.rf.Start(NewOperation)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 
 	kv.mu.Unlock()
@@ -129,6 +132,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 			return nil
 		}
 
+		// TODO 显然只是修改了字典 可以把字典改成线程安全的哈希map，但是这样在持久化的时候就比较麻烦，为了性能，改！
 		kv.mu.Lock()
 		if value, ok := kv.KvDictionary[args.Key]; ok {
 			reply.Value = value
@@ -154,26 +158,28 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 		return nil
 	}
 
+	NewOperation := KvOp{Key: args.Key, Value: args.Value, Op: args.Op, ClientID: args.ClientID, Clientseq: args.SeqNo}
+	Notice := make(chan struct{})
+
+	log.Printf("INFO : ClientId[%d], PUTAPPEND:key(%s),value(%s)\n", args.ClientID,args.Key, args.Value)
+
 	kv.mu.Lock()
 	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		//log.Printf("DEBUG : args.SeqNo : %d , dup.Seq : %d\n", args.SeqNo, dup.Seq)
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
+
+			log.Printf("WARNING : ClientId[%d], This request(PutAppend -> key(%s) value(%s)) is repeated.\n", args.ClientID, args.Key, args.Value)
 			reply.Err = Duplicate
 			return nil
 		}
 	}
 
-	// 新请求
-	NewOperation := KvOp{Key: args.Key, Value: args.Value, Op: args.Op, ClientID: args.ClientID, Clientseq: args.SeqNo}
-
-	log.Printf("INFO : ClientId[%d], PUTAPPEND:key(%s),value(%s)\n", args.ClientID,args.Key, args.Value)
-
 	index, term, _ := kv.rf.Start(NewOperation)
 	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
+
 	kv.mu.Unlock()
 
 	reply.Err = OK
@@ -192,6 +198,9 @@ func (kv *RaftKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 	return nil
 }
 
+/*
+ * @notes: 调用这个函数必须在kvraft的锁保护范围之内进行
+ */
 func (kv *RaftKV) persisterSnapshot(index int) {
 	w := new(bytes.Buffer)
 	e := gob.NewEncoder(w)
@@ -203,6 +212,8 @@ func (kv *RaftKV) persisterSnapshot(index int) {
 	e.Encode(kv.ClientSeqCache)
 
 	data := w.Bytes()
+
+	// TODO 这里的落盘操作是在临界区内的，是否可以修改，当然这也是不推荐always的理由
 	kv.persist.SaveSnapshot(data)
 }
 
@@ -238,8 +249,8 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 	kv.applyCh = make(chan Raft.ApplyMsg)
 
 	kv.KvDictionary = make(map[string]string)
-	kv.ClientInstanceSeq = make(map[uint64]uint64)
-	kv.ClientInstanceCheckSum = make(map[uint64]uint64)
+	kv.ClientInstanceSeq = make(map[uint64]chan uint64)
+	kv.ClientInstanceCheckSum = make(map[uint64]chan uint64)
 	kv.LogIndexNotice = make(map[int]chan struct{})
 	kv.persist = persister
 

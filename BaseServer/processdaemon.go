@@ -22,7 +22,6 @@ import (
 	"time"
 )
 
-// TODO 目前这个结构体存在着大量的浪费情况，后面可以抽象成两个,在守护进程中使用反射解析开;不得不使用反射
 type KvOp struct {
 	Key   string
 	Value string
@@ -80,6 +79,10 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 				}
 				if msg.Command != nil && msg.Index > kv.snapshotIndex {
 
+					// 这个参数的作用是把raft的快照操作从kv.mu的临界区拿出去
+					var IsSnapShot bool = false
+					var IsNeedSnapShot bool = kv.isUpperThanMaxraftstate()
+
 					if cmd, ok := msg.Command.(KvOp); ok {
 						kv.mu.Lock()
 						//	显然在是一个新用户或者新操作seq大于ClientSeqCache中的值时才执行
@@ -112,9 +115,17 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 							// log.Printf("错误情况 dup.Seq %d ; cmd.Clientseq %d\n", dup.Seq , cmd.Clientseq)
 						}
 					} else if cmd, ok := msg.Command.(FileOp); ok {
+						// 这里的问题是我在临界区内打了很多日志，这其实比较蠢，但是现在先不急着改
 						kv.mu.Lock()
 
 						if dup, ok := kv.ClientSeqCache[int64(cmd.ClientID)]; !ok || dup.Seq < cmd.Clientseq {
+							if !ok {// 此时显然这个用户是新的，我们创建一个无缓冲的channel
+								// 这里为什么设置3呢，原因是设置通知这里可能出现多次进入但lockserver中还没有取
+								//这种概率极低，我测试了很多次都没有出现，但是理论存在，所以设置一个3作为度
+								kv.ClientInstanceCheckSum[cmd.ClientID] = make(chan uint64, 3)
+								kv.ClientInstanceSeq[cmd.ClientID] = make(chan uint64, 3)
+							}
+
 							switch cmd.Op {
 							case "Open":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
@@ -123,9 +134,12 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 									seq, chuckSum := node.Open(cmd.PathName) // 返回此文件的InstanceSeq
 									node.OpenReferenceCount++
 									log.Printf("INFO : [%d] Open file(%s) sucess, instanceSeq is %d, chucksum is %s.\n", kv.me, cmd.PathName, seq, chuckSum)
-									kv.ClientInstanceSeq[cmd.ClientID] = seq
-									kv.ClientInstanceCheckSum[cmd.ClientID] = chuckSum
+									kv.ClientInstanceSeq[cmd.ClientID] <- seq
+									kv.ClientInstanceCheckSum[cmd.ClientID] <- chuckSum
 								} else {
+									// 零协议为错误的值,用作通知机制,checksum和seq中零都是错误的值
+									kv.ClientInstanceSeq[cmd.ClientID] <- NoticeErrorValue
+									kv.ClientInstanceCheckSum[cmd.ClientID] <- NoticeErrorValue
 									log.Printf("INFO : [%d] Open Not find path(%s)!\n", kv.me, cmd.PathName)
 								}
 							case "Create":
@@ -135,14 +149,19 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 									seq, checksum, err := node.Insert(cmd.InstanceSeq, cmd.LockOrFileOrDeleteType, cmd.FileName, nil, nil, nil)
 									if err == nil {
 										log.Printf("INFO : [%d] Create file(%s) sucess, instanceSeq is %d, checksum is %d.\n", kv.me, cmd.FileName, seq, checksum)
-										kv.ClientInstanceSeq[cmd.ClientID] = seq
-										kv.ClientInstanceCheckSum[cmd.ClientID] = checksum
+										kv.ClientInstanceSeq[cmd.ClientID] <- seq
+										kv.ClientInstanceCheckSum[cmd.ClientID] <- checksum
+										break
 									} else {
 										log.Printf("INFO : [%d] Create file(%s) failture, %s\n", kv.me, cmd.FileName, err.Error())
 									}
 								} else {
 									log.Printf("INFO : [%d] Create Not find path(%s)!\n", kv.me, cmd.PathName)
 								}
+								// 合并上面两个条件
+								kv.ClientInstanceSeq[cmd.ClientID] <- NoticeErrorValue
+								kv.ClientInstanceCheckSum[cmd.ClientID] <- NoticeErrorValue
+
 							case "Delete":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
@@ -150,18 +169,22 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 									err := node.Delete(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileOrDeleteType, cmd.CheckSum)
 									if err == nil {
 										log.Printf("INFO : [%d] Delete file(%s) sucess.\n", kv.me, cmd.FileName)
-										kv.ClientInstanceSeq[cmd.ClientID] = 0 // 特殊的情况,我们需要一个通知机制
+										kv.ClientInstanceSeq[cmd.ClientID] <- NoticeSucess // 特殊的情况,我们需要一个通知机制
+										break
 									} else {
 										log.Printf("INFO : [%d] Delete file(%s) failture, %s.\n", kv.me, cmd.FileName, err.Error())
 									}
 								} else {
 									log.Printf("INFO : [%d] Delete Not find path(%s)!\n", kv.me, cmd.PathName)
 								}
+
+								kv.ClientInstanceSeq[cmd.ClientID] <- NoticeErrorValue
+
 							case "Acquire":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
-									seq, err := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileOrDeleteType, cmd.CheckSum)
+									token, err := node.Acquire(cmd.InstanceSeq, cmd.FileName, cmd.LockOrFileOrDeleteType, cmd.CheckSum)
 									if err == nil {
 										var LockTypeName string
 										if cmd.LockOrFileOrDeleteType == WriteLock {
@@ -169,7 +192,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 										} else {
 											LockTypeName = "ReadLock"
 										}
-										kv.ClientInstanceSeq[cmd.ClientID] = seq
+										kv.ClientInstanceSeq[cmd.ClientID] <- token
 										if cmd.TimeOut > 0{
 											go func() {
 												// TODO 这里其实还应该考虑数据包往返时延和双方时钟不同步的度,但是服务端大一点不影响正确性
@@ -187,36 +210,46 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 											}()
 										}
 										log.Printf("INFO : [%d] Acquire file(%s) sucess, locktype is %s.\n", kv.me, cmd.FileName, LockTypeName)
+										break
 									} else {
 										log.Printf("INFO : [%d] Acquire error (%s) -> %s!\n", kv.me, cmd.PathName, err.Error())
 									}
 								}
+								kv.ClientInstanceSeq[cmd.ClientID] <- NoticeErrorValue
+
 							case "Release":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
 									err := node.Release(cmd.InstanceSeq, cmd.FileName, cmd.Token, cmd.CheckSum)
 									if err == nil {
-										kv.ClientInstanceSeq[cmd.ClientID] = 0 // 通知机制
+										kv.ClientInstanceSeq[cmd.ClientID] <- NoticeSucess // 通知机制
 										// 这里只看读锁的引用计数,如果原先是读锁这就是正确的,如果是写锁Release以后也是零,是正确的;错误的话不会进入这里
 										log.Printf("INFO : [%d] Release file(%s) sucess, this file reference count is %d\n", kv.me, cmd.FileName, node.readLockReferenceCount)
+										break
 									} else {
 										log.Printf("INFO : [%d] Release error(%s) -> %s!\n", kv.me, cmd.PathName, err.Error())
 									}
 								}
+
+								kv.ClientInstanceSeq[cmd.ClientID] <- NoticeErrorValue
+
 							case "CheckToken":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok{
 									err := node.CheckToken(cmd.Token, cmd.FileName)
 									if err == nil {
-										kv.ClientInstanceSeq[cmd.ClientID] = 0 // 通知机制
+										kv.ClientInstanceSeq[cmd.ClientID] <- NoticeSucess // 通知机制
 										// 这里只看读锁的引用计数,如果原先是读锁这就是正确的,如果是写锁Release以后也是零,是正确的;错误的话不会进入这里
 										log.Printf("INFO : [%d] CheckToken file(%s) sucess, this file reference count is %d\n", kv.me, cmd.FileName, node.readLockReferenceCount)
+										break
 									} else {
 										log.Printf("INFO : [%d] CheckToken error(%s) -> %s!\n", kv.me, cmd.PathName, err.Error())
 									}
 								}
+
+								kv.ClientInstanceSeq[cmd.ClientID] <- NoticeErrorValue
 							}
 						} else {
 							log.Println("ERROR : Multiple clients have the same ID !")
@@ -224,12 +257,15 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 					}
 
 					// msg.IsSnapshot && kv.isUpperThanMaxraftstate()
-					if kv.isUpperThanMaxraftstate() {
+					if IsNeedSnapShot { // kv.isUpperThanMaxraftstate()
 						log.Printf("INFO : [%d] need create a snapshot. maxraftstate(%d), nowRaftStateSize(%d).\n",
 							kv.me, kv.maxraftstate, kv.persist.RaftStateSize())
 						kv.persisterSnapshot(msg.Index) // 此index以前的数据已经打包成快照了
+
+						/* IsSnapshot = true
+						// 这个调用放在临界区内貌似比较慢,而且不需要锁的保护
 						// 需要解决死锁；8月24日已解决!
-						kv.rf.CreateSnapshots(msg.Index) // 使协议层进行快照
+						kv.rf.CreateSnapshots(msg.Index) // 使协议层进行快照*/
 					}
 
 					// 通知服务端操作
@@ -237,25 +273,39 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 						close(notifyCh)
 						delete(kv.LogIndexNotice, msg.Index)
 					}
+
 					kv.mu.Unlock()
+
+					if IsSnapShot{
+						kv.rf.CreateSnapshots(msg.Index)
+					}
 				}
 			}
 		}
 	}
 }
 
+
+/*
+ * @notes: 因为这个函数中maxraftstate是不变的，RaftStateSize()又是由persist中的锁保护的，所以完全没必要放在临界区内
+*/
 func (kv *RaftKV) isUpperThanMaxraftstate() bool {
 	if kv.maxraftstate <= 0 { // 小于等于零的时候不执行快照
 		return false
 	}
+
+	NowRaftStateSize := kv.persist.RaftStateSize()
+
 	// 后者其实存储的是Raft的状态大小，这个大小在Raft库中是在每次持久化时维护的
-	if kv.maxraftstate < kv.persist.RaftStateSize() {
+	if kv.maxraftstate < NowRaftStateSize {
 		return true
 	}
 	// 以上两种是极端情况，我们需要考虑靠近临界值时就持久化快照，暂定15%
-	var interval = kv.maxraftstate - kv.persist.RaftStateSize()
+	var interval = kv.maxraftstate - NowRaftStateSize
+
 	if interval < kv.maxraftstate/20*3 {
 		return true
 	}
+
 	return false
 }

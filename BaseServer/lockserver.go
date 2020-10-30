@@ -55,24 +55,26 @@ func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error {
 		return nil
 	}
 
+	NewOperation := FileOp{Op: "Open", ClientID: args.ClientID, Clientseq: args.SeqNo, PathName: args.PathName}
+
+	Notice := make(chan struct{})
+
+	log.Printf("INFO : ClientId[%d], Open : pathname(%s))\n", args.ClientID, args.PathName)
+
 	kv.mu.Lock()
 	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
 		//log.Printf("DEBUG : args.SeqNo : %d , dup.Seq : %d\n", args.SeqNo, dup.Seq)
 		if args.SeqNo <= dup.Seq {
 			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(Open -> pathname(%s)) is repeated.\n", args.ClientID, args.PathName)
 			reply.Err = Duplicate
 			return nil
 		}
 	}
 
-	NewOperation := FileOp{Op: "Open", ClientID: args.ClientID, Clientseq: args.SeqNo, PathName: args.PathName}
-
-	log.Printf("INFO : ClientId[%d], Open : pathname(%s))\n", args.ClientID, args.PathName)
-
 	index, term, _ := kv.rf.Start(NewOperation)
 	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 	kv.mu.Unlock()
 
@@ -85,20 +87,14 @@ func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error {
 			reply.Err = ReElection
 			return nil
 		}
-		kv.mu.Lock()
 
-		seq, ok1 := kv.ClientInstanceSeq[args.ClientID]
-		chuckSum, ok2 := kv.ClientInstanceCheckSum[args.ClientID]
-		if ok1 && ok2 {
-			delete(kv.ClientInstanceCheckSum, args.ClientID)
-			delete(kv.ClientInstanceSeq, args.ClientID) // 防止后面请求没有成功却返回成功
+		reply.ChuckSum = <- kv.ClientInstanceCheckSum[args.ClientID]
+		reply.InstanceSeq = <- kv.ClientInstanceSeq[args.ClientID]
 
-			reply.ChuckSum = chuckSum
-			reply.InstanceSeq = seq
-		} else {
+		if reply.ChuckSum == NoticeErrorValue || reply.InstanceSeq == NoticeErrorValue {
 			reply.Err = OpenError
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 		return nil
 	}
@@ -118,25 +114,28 @@ func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error {
 		return nil
 	}
 
-	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
-		if args.SeqNo <= dup.Seq {
-			kv.mu.Unlock()
-			reply.Err = Duplicate
-			return nil
-		}
-	}
+	Notice := make(chan struct{})
 
 	NewOperation := FileOp{Op: "Create", ClientID: args.ClientID, Clientseq: args.SeqNo,
 		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, LockOrFileOrDeleteType: args.FileType}
 
 	log.Printf("INFO : ClientId[%d], Create : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(Create -> pathname(%s) filename(%s)) is repeated.\n", args.ClientID, args.PathName, args.FileName)
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
 	index, term, _ := kv.rf.Start(NewOperation)
 	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
+
 	kv.mu.Unlock()
 
 	reply.Err = OK
@@ -148,20 +147,14 @@ func (kv *RaftKV) Create(args *CreateArgs, reply *CreateReply) error {
 			reply.Err = ReElection
 			return nil
 		}
-		kv.mu.Lock()
 
-		seq, ok1 := kv.ClientInstanceSeq[args.ClientID]
-		checksum, ok2 := kv.ClientInstanceCheckSum[args.ClientID]
-		if ok1 && ok2 {
-			delete(kv.ClientInstanceSeq, args.ClientID)
-			delete(kv.ClientInstanceCheckSum, args.ClientID)
+		reply.CheckSum = <- kv.ClientInstanceCheckSum[args.ClientID]
+		reply.InstanceSeq = <- kv.ClientInstanceSeq[args.ClientID]
 
-			reply.CheckSum = checksum
-			reply.InstanceSeq = seq
-		} else {
+		if reply.CheckSum == NoticeErrorValue || reply.InstanceSeq == NoticeErrorValue {
 			reply.Err = CreateError
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 		return nil
 	}
@@ -181,25 +174,27 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error {
 		return nil
 	}
 
-	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
-		if args.SeqNo <= dup.Seq {
-			kv.mu.Unlock()
-			reply.Err = Duplicate
-			return nil
-		}
-	}
-
 	NewOperation := FileOp{Op: "Delete", ClientID: args.ClientID, Clientseq: args.SeqNo,
 		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq,
 		LockOrFileOrDeleteType: args.OpType, CheckSum: args.Checksum}
 
 	log.Printf("INFO : ClientId[%d], Delete : pathname(%s) filename(%s) checksum(%d)\n", args.ClientID, args.PathName, args.FileName, args.Checksum)
 
+	Notice := make(chan struct{})
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(Delete -> pathname(%s)) is repeated.\n", args.ClientID, args.PathName)
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
 	index, term, _ := kv.rf.Start(NewOperation)
 	//log.Printf("DEBUG client %d : index %d\n", kv.me, index)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 	kv.mu.Unlock()
 
@@ -212,16 +207,14 @@ func (kv *RaftKV) Delete(args *CloseArgs, reply *CloseReply) error {
 			reply.Err = ReElection
 			return nil
 		}
-		kv.mu.Lock()
 
-		// 对于close显然seq的设置没有什么意义,但我们需要一个通知机制
-		_, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok {
-			delete(kv.ClientInstanceSeq, args.ClientID)
-		} else {
+		NoticeError := <- kv.ClientInstanceSeq[args.ClientID]
+
+		// 当返回值为NoticeSucess的时候没有问题
+		if NoticeError == NoticeErrorValue {
 			reply.Err = DeleteError
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 		return nil
 	}
@@ -241,24 +234,26 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error {
 		return nil
 	}
 
-	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
-		if args.SeqNo <= dup.Seq {
-			kv.mu.Unlock()
-			reply.Err = Duplicate
-			return nil
-		}
-	}
-
 	NewOperation := FileOp{Op: "Acquire", ClientID: args.ClientID, Clientseq: args.SeqNo,
 		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq,
 		LockOrFileOrDeleteType: args.LockType, CheckSum: args.Checksum, TimeOut: args.TimeOut}
 
 	log.Printf("INFO : ClientId[%d], Acquire : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
+	Notice := make(chan struct{})
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(Acquire -> pathname(%s)) is repeated.\n", args.ClientID, args.PathName)
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
 	index, term, _ := kv.rf.Start(NewOperation)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 	kv.mu.Unlock()
 
@@ -271,16 +266,14 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error {
 			reply.Err = ReElection
 			return nil
 		}
-		kv.mu.Lock()
 
-		seq, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok {
-			delete(kv.ClientInstanceSeq, args.ClientID)
-			reply.InstanceSeq = seq
-		} else {
+		reply.InstanceSeq = <- kv.ClientInstanceSeq[args.ClientID]
+
+		// 当返回值为1的时候没有问题
+		if reply.InstanceSeq == NoticeErrorValue {
 			reply.Err = AcquireError
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 		return nil
 	}
@@ -300,23 +293,25 @@ func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error {
 		return nil
 	}
 
-	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
-		if args.SeqNo <= dup.Seq {
-			kv.mu.Unlock()
-			reply.Err = Duplicate
-			return nil
-		}
-	}
-
 	NewOperation := FileOp{Op: "Release", ClientID: args.ClientID, Clientseq: args.SeqNo,
 		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, Token: args.Token, CheckSum: args.CheckSum}
 
 	log.Printf("INFO : ClientId[%d], Release : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
+	Notice := make(chan struct{})
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(Release -> pathname(%s)) is repeated.\n", args.ClientID, args.PathName)
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
 	index, term, _ := kv.rf.Start(NewOperation)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 	kv.mu.Unlock()
 
@@ -329,16 +324,14 @@ func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error {
 			reply.Err = ReElection
 			return nil
 		}
-		kv.mu.Lock()
 
-		_, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok {
-			// 因为这个命令中seq只是一个通知机制
-			delete(kv.ClientInstanceSeq, args.ClientID)
-		} else {
+		NoticeError := <- kv.ClientInstanceSeq[args.ClientID]
+
+		// 当返回值为1的时候没有问题
+		if NoticeError == NoticeErrorValue {
 			reply.Err = ReleaseError
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 		return nil
 	}
@@ -358,23 +351,25 @@ func (kv *RaftKV) CheckToken(args *CheckTokenArgs, reply *CheckTokenReply) error
 		return nil
 	}
 
-	kv.mu.Lock()
-	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
-		if args.SeqNo <= dup.Seq {
-			kv.mu.Unlock()
-			reply.Err = Duplicate
-			return nil
-		}
-	}
-
 	NewOperation := FileOp{Op: "CheckToken", ClientID: args.ClientID, Clientseq: args.SeqNo,
 		PathName: args.PathName, FileName: args.FileName, Token: args.Token}
 
 	log.Printf("INFO : ClientId[%d], CheckToken : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
 
+	Notice := make(chan struct{})
+
+	kv.mu.Lock()
+	if dup, ok := kv.ClientSeqCache[int64(args.ClientID)]; ok {
+		if args.SeqNo <= dup.Seq {
+			kv.mu.Unlock()
+			log.Printf("WARNING : ClientId[%d], This request(CheckToken -> pathname(%s) filename(%s)) is repeated.\n", args.ClientID, args.PathName, args.FileName)
+			reply.Err = Duplicate
+			return nil
+		}
+	}
+
 	index, term, _ := kv.rf.Start(NewOperation)
 
-	Notice := make(chan struct{})
 	kv.LogIndexNotice[index] = Notice
 	kv.mu.Unlock()
 
@@ -387,15 +382,14 @@ func (kv *RaftKV) CheckToken(args *CheckTokenArgs, reply *CheckTokenReply) error
 			reply.Err = ReElection
 			return nil
 		}
-		kv.mu.Lock()
 
-		_, ok := kv.ClientInstanceSeq[args.ClientID]
-		if ok {
-			delete(kv.ClientInstanceSeq, args.ClientID)
-		} else {
+		NoticeError := <- kv.ClientInstanceSeq[args.ClientID]
+
+		// 当返回值为1的时候没有问题
+		if NoticeError == NoticeErrorValue {
 			reply.Err = CheckTokenError
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 		return nil
 	}

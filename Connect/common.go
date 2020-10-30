@@ -213,7 +213,7 @@ func ParserFileName(pathname string) bool {
 		return false
 	}
 
-	index1 := 0 // 标示后缀
+	index1 := -1 // 标示后缀
 	index2 := 0 // 标示文件名
 
 	for i := Length - 1; i >= 0; i-- {
@@ -224,8 +224,9 @@ func ParserFileName(pathname string) bool {
 			break
 		}
 	}
+
 	// 不存在后缀
-	if index1 == 0 {
+	if index1 == -1 {
 		return false
 	}
 

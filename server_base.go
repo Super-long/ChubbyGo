@@ -1,10 +1,10 @@
 package main
 
 import (
-	"HummingbirdDS/Connect"
+	"ChubbyGo/Connect"
 	"fmt"
 )
-import _ "HummingbirdDS/Config"
+import _ "ChubbyGo/Config"
 
 func main(){
 	cfg := Connect.CreatServer(3)

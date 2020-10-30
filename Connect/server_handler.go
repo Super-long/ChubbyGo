@@ -18,9 +18,9 @@
 package Connect
 
 import (
-	"HummingbirdDS/Flake"
-	"HummingbirdDS/BaseServer"
-	"HummingbirdDS/Persister"
+	"ChubbyGo/Flake"
+	"ChubbyGo/BaseServer"
+	"ChubbyGo/Persister"
 	"log"
 	"net"
 	"net/http"

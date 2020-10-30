@@ -18,7 +18,7 @@
 package Config
 
 import (
-	"HummingbirdDS/Connect"
+	"ChubbyGo/Connect"
 	"encoding/json"
 	io "io/ioutil"
 	"log"

@@ -122,6 +122,7 @@ type FileSystemNode struct {
 /*
  * @notes: 用instanceSeq,nowPath,len(next),len(nextNameCache)为参数生成64位校验和,完全没有必要使用CRC,MD5,
  * 只要保证相同的输入能得到相同的输出就可以了; 这样可能会多次open文件的checksum相同
+ * 显然instanceSeq最小值为1，checksum也不可能是0，所以ClientInstanceSeq和ClientInstanceSeq可以使用0作为无效值
  */
 func (Fsn *FileSystemNode) makeCheckSum() uint64 {
 	// 生成20位字符串,每一位都是16进制的数字
@@ -180,9 +181,14 @@ func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, Rea
 	NewNode.writeACLs = WriteAcl
 	NewNode.modifyACLs = ModifyAcl
 
-	Seq := Fsn.nextNameCache[name]
-	NewNode.instanceSeq = Seq // 使用的时候直接用就好，delete的时候会递增
-	NewNode.tokenSeq = 0      // 使用的时候先递增，再取值，也就是说TockenSeq最低有效值是1
+	// 初始值设定为2，协定0为无效值.1为delete的删除值
+	if Seq, ok:=Fsn.nextNameCache[name]; ok{
+		NewNode.instanceSeq = Seq // 使用的时候直接用就好，delete的时候会递增
+	} else {
+		NewNode.instanceSeq = 2
+		Fsn.nextNameCache[name] = 2
+	}
+	NewNode.tokenSeq = 2      // 使用的时候先递增，再取值，也就是说TockenSeq最低有效值是2
 	NewNode.aCLsSeq = 0
 	NewNode.checksum = NewNode.makeCheckSum()
 
@@ -370,8 +376,9 @@ func InitRoot() *FileSystemNode {
 	//root.fileName = "ChubbyCell_" + strconv.Itoa(int(leaderID))
 	root.fileName = "ChubbyCell_" + "lizhaolong"
 
-	root.instanceSeq = 0
-	root.tokenSeq = 0
+	// instanceseq与tokenseq的初始值是2，零设定为无效值,1为delete通知的成功值
+	root.instanceSeq = 2
+	root.tokenSeq = 2
 	root.aCLsSeq = 0
 	root.checksum = root.makeCheckSum()
 

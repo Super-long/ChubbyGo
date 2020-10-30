@@ -18,7 +18,7 @@
 package BaseServer
 
 import (
-	"HummingbirdDS/Flake"
+	"ChubbyGo/Flake"
 	"crypto/rand"
 	"log"
 	"math/big"

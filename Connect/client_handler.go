@@ -18,7 +18,7 @@
 package Connect
 
 import (
-	"HummingbirdDS/BaseServer"
+	"ChubbyGo/BaseServer"
 	"log"
 	"net"
 	"net/rpc"
