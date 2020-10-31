@@ -1,8 +1,20 @@
 # ChubbyGo
 
-需要引入以下两个三方库：
+![avatar](Pictures/ChubbyGo.jpg)
+This cute Totoro's name is Go, and he may be a friend of Tux!
+这个可爱的龙猫的名字叫做Go，他也许是Tux的朋友！
+
+## Description
+
+要运行ChubbyGo需要引入以下两个三方库：
 1. github.com/sony/sonyflake
 2. github.com/OneOfOne/xxhash
+
+## Introduction
+
+ChubbyGo是一个基于Raft协议的分布式锁服务，其提供了在低耦合分布式系统中粗粒度的锁定和可靠的存储。
+
+大家也许都知道Chubby其实是2006年谷歌发表的论文《The Chubby lock service for loosely-coupled distributed systems》中描述的服务，但是是闭源的，后来雅虎研究院将一个类似的项目捐献给了Apache基金会，这个项目的名字叫做ZooKeeper。ZooKeeper实现了更高级别的抽象，以实现一个分布式协调中心，以此留给客户端更多的自由，但相应的带来了复杂度。为了更简单的使用，我根据论文实现了Chubby，并命名为ChubbyGo。
 
 ChubbyGo目前实现的功能：
 
@@ -19,7 +31,7 @@ ChubbyGo目前实现的功能：
 10. 允许服务器宕机重启，并读取持久化数据，并重新加入原集群，整个集群继续对外提供服务。
 11. 实现类Unix文件系统接口以提供编程人员更熟悉的分布式锁接口;文件系统的权限信息现在很模糊，
 不知道该如何提供一个客户可用的权限表示形式，其中ACL现在没用;
-12. 可以引入线程安全的哈希map提升并发度，并进一步支持fastget操作
+12. 可以引入线程安全的哈希map提升并发度，并进一步支持fastget操作;
 
 
 ChubbyGo文件系统中定义的行为：
@@ -33,3 +45,8 @@ ChubbyGo文件系统中定义的行为：
 8. 可以对每一个ChubbyGo Cell内除了根目录以外的目录加锁，即根目录可以打开，无法被加锁。
 9. 当打开一个文件时我们可以对其进行加锁操作，支持读锁和写锁。
 10. 加锁以后需要解锁。
+
+## Thanks
+感谢李浩提供了一种更优的服务器启动时间间隔处理函数。
+
+感谢李怡提供了ChubbyGo Logo第一版与第二版的设计，由此才产生了Go这个可爱的小家伙儿。

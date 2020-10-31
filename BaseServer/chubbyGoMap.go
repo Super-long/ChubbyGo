@@ -93,3 +93,19 @@ func (hs *ChubbyGoConcurrentMap) ChubbyGoMapSet(key string, value string) {
 		log.Println("ERROR : ChubbyGoMapSet -> No such situation.")
 	}
 }
+
+func (hs *ChubbyGoConcurrentMap) ChubbyGoMapDelete(key string){
+	if hs.Flag == SyncMap {
+
+		Map := hs.MapEntry.Addr().Interface().(*sync.Map)
+		Map.Delete(key)
+
+	} else if hs.Flag == ConcurrentMap {
+
+		Map := hs.MapEntry.Addr().Interface().(*ConcurrentHashMap)
+		Map.Remove(key)
+
+	} else {
+		log.Println("ERROR : ChubbyGoMapSet -> No such situation.")
+	}
+}
