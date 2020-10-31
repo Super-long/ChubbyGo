@@ -267,10 +267,11 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error {
 			return nil
 		}
 
-		reply.InstanceSeq = <- kv.ClientInstanceSeq[args.ClientID]
+		reply.Token = <- kv.ClientInstanceSeq[args.ClientID]
+		log.Printf("DEBUG : lockserver Acquire token is %d.\n", reply.Token)
 
 		// 当返回值为1的时候没有问题
-		if reply.InstanceSeq == NoticeErrorValue {
+		if reply.Token == NoticeErrorValue {
 			reply.Err = AcquireError
 		}
 
@@ -296,7 +297,7 @@ func (kv *RaftKV) Release(args *ReleaseArgs, reply *ReleaseReply) error {
 	NewOperation := FileOp{Op: "Release", ClientID: args.ClientID, Clientseq: args.SeqNo,
 		PathName: args.PathName, FileName: args.FileName, InstanceSeq: args.InstanceSeq, Token: args.Token, CheckSum: args.CheckSum}
 
-	log.Printf("INFO : ClientId[%d], Release : pathname(%s) filename(%s)\n", args.ClientID, args.PathName, args.FileName)
+	log.Printf("INFO : ClientId[%d], Release : pathname(%s) filename(%s) token(%d)\n", args.ClientID, args.PathName, args.FileName, args.Token)
 
 	Notice := make(chan struct{})
 

@@ -25,7 +25,7 @@ func main() {
 		if err != nil {
 			log.Println(err.Error())
 		} else {
-			clientConfigs[i].SetUniqueFlake(uint64(i + n*3))
+			clientConfigs[i].SetUniqueFlake(uint64(i + n*20))
 		}
 	}
 

@@ -15,7 +15,7 @@ import (
  */
 
 func main(){
-	n := 50
+	n := 60
 	Sem := make(Connect.Semaphore, n)
 	SemNumber := 0
 	clientConfigs := make([]*Connect.ClientConfig,n)
@@ -26,7 +26,7 @@ func main(){
 		if err != nil {
 			log.Println(err.Error())
 		} else {	// 显然连接成功以后才可以
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*40))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*60))	// 想多次重试OK就每次把这里的0每次递增1就ok
 			flags[i] = true
 		}
 	}

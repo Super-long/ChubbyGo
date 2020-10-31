@@ -1,5 +1,9 @@
 # ChubbyGo
 
+需要引入以下两个三方库：
+1. github.com/sony/sonyflake
+2. github.com/OneOfOne/xxhash
+
 ChubbyGo目前实现的功能：
 
 1. raft基础协议完成，包括：领导人选举，日志复制，日志压缩；集群关系变更暂未实现。

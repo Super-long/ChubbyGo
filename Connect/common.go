@@ -205,6 +205,8 @@ func ParserIP(address string) bool {
  *	Linux下使用getconf PATH_MAX /usr 获取路径长度限制;4096
  * 	getconf NAME_MAX /usr 获取文件名称长度限制;255
  *	还有一点是我个人的要求,后缀必须是hdb,就是这么傲娇
+ * 文件名的限制 : https://en.wikipedia.org/wiki/Filename
+ * 目前搜到的文件名限制就是不允许采用"/"和"null",且"-"不能是第一个字符
  */
 func ParserFileName(pathname string) bool {
 	Length := len(pathname)
@@ -275,8 +277,8 @@ func ReturnInterval(n int) int {
 	return int(res * 1000)
 }
 
-/* TODO 表还需要再测测
- * @brief: 对不齐就很烦,go Ctrl+Alt+L 会自动把注释后推
+/*
+ * @brief: 对不齐就很烦,go Ctrl+Alt+L 会自动把注释后推;考虑到可能使用url作为文件名
  */
 var iseffective = [128]bool{
 	/*0   nul    soh    stx    etx    eot    enq    ack    bel     7*/

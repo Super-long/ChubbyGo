@@ -316,7 +316,7 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string, Token ui
 
 	// 防止落后的锁持有者删除掉现有的被其他节点持有的锁
 	if Token < Node.tokenSeq {
-		log.Printf("WARNING : Have a lagging client want release file(%s) now(%d) clientSeq(%d).\n", Node.nowPath, Token, Node.tokenSeq)
+		log.Printf("WARNING : Have a lagging client want release file(%s) now(%d) node.clientSeq(%d).\n", Node.nowPath, Token, Node.tokenSeq)
 		return ChubbyGoFileSystemError(TokenSeqError)
 	}
 

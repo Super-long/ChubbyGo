@@ -210,7 +210,8 @@ func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, L
 		case ok := <-replyArrival:
 			if ok && (reply.Err == OK) {
 				ck.seq++
-				return true, reply.InstanceSeq
+				log.Printf("Acquire sucess, token is %d.\n", reply.Token)
+				return true, reply.Token
 			} else if reply.Err == AcquireError || reply.Err == Duplicate{
 				// 对端打开文件失败
 				log.Printf("INFO : Acqurie (%s/%s) error -> [%s]\n", pathname, filename, reply.Err)
@@ -233,6 +234,8 @@ func (ck *Clerk) Release(pathname string, filename string, instanceseq uint64, t
 	for {
 		args := &ReleaseArgs{PathName: pathname, ClientID: ck.ClientID, SeqNo: ck.seq,
 			InstanceSeq: instanceseq, FileName: filename, Token: token, CheckSum: checksum}
+
+		log.Printf("DEBUG : Release client token is %d.\n", token)
 
 		reply := new(ReleaseReply)
 

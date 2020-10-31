@@ -50,7 +50,7 @@ type RaftKV struct {
 
 	// 需要持久化的信息
 	snapshotIndex int								// 现在日志上哪一个位置以前都已经是快照了，包括这个位置
-	KvDictionary            map[string]string		// 字典
+	KvDictionary            *ChubbyGoConcurrentMap		// 字典
 	ClientSeqCache 			map[int64]*LatestReply	// 用作判断当前请求是否已经执行过
 
 	// 以下两项均作为通知机制;注意,协商以0为无效值,这样可以避免读取时锁的使用,ClientInstanceSeq用作instance和token
@@ -132,17 +132,18 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 			return nil
 		}
 
-		// TODO 显然只是修改了字典 可以把字典改成线程安全的哈希map，但是这样在持久化的时候就比较麻烦，为了性能，改！
-		kv.mu.Lock()
-		if value, ok := kv.KvDictionary[args.Key]; ok {
+		// 改成ChubbyGoMap以后就不需要加锁mu.lock了;以此提升并发度
+		// log.Printf("DEBUG : Now key(%s).\n", args.Key)
+		if value, ok := kv.KvDictionary.ChubbyGoMapGet(args.Key); ok {
 			reply.Value = value
 		} else {
 			reply.Err = ErrNoKey
 			reply.Value = "" // 这样写client.go可以少一个条件语句
 		}
-		kv.mu.Unlock()
+
 	case <-kv.shutdownCh:
 	}
+
 	return nil
 }
 
@@ -213,7 +214,7 @@ func (kv *RaftKV) persisterSnapshot(index int) {
 
 	data := w.Bytes()
 
-	// TODO 这里的落盘操作是在临界区内的，是否可以修改，当然这也是不推荐always的理由
+	// 这里的落盘操作是在临界区内的，这是不推荐always的理由之一
 	kv.persist.SaveSnapshot(data)
 }
 
@@ -224,7 +225,8 @@ func (kv *RaftKV) readSnapshot(data []byte) {
 	r := bytes.NewBuffer(data)
 	d := gob.NewDecoder(r)
 
-	kv.KvDictionary = make(map[string]string)
+	// TODO 这里也需要改
+	kv.KvDictionary = NewChubbyGoMap(SyncMap)
 	kv.ClientSeqCache = make(map[int64]*LatestReply)
 
 	d.Decode(&kv.KvDictionary)
@@ -248,7 +250,8 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 
 	kv.applyCh = make(chan Raft.ApplyMsg)
 
-	kv.KvDictionary = make(map[string]string)
+	// TODO 这里需要读取一手配置文件选择策略
+	kv.KvDictionary = NewChubbyGoMap(SyncMap)
 	kv.ClientInstanceSeq = make(map[uint64]chan uint64)
 	kv.ClientInstanceCheckSum = make(map[uint64]chan uint64)
 	kv.LogIndexNotice = make(map[int]chan struct{})

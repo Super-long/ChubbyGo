@@ -36,15 +36,15 @@ type FileOp struct {
 	ClientID  uint64 // 每个Client的ID
 	Clientseq int    // 这个ClientID上目前的操作数
 
-	InstanceSeq    uint64 // 每次请求的InstanceSeq，用于判断请求是否过期
-	Token          uint64 // 锁的版本号
+	InstanceSeq uint64 // 每次请求的InstanceSeq，用于判断请求是否过期
+	Token       uint64 // 锁的版本号
 
-	LockOrFileOrDeleteType int    // 锁定类型或者文件类型或者delete，反正三个不会一起用
+	LockOrFileOrDeleteType int // 锁定类型或者文件类型或者delete，反正三个不会一起用
 
-	FileName       string // 在open时是路径名，其他时候是文件名
-	PathName       string // 路径名称
-	CheckSum	   uint64 // 校验位
-	TimeOut		   uint32 // 加锁超时参数
+	FileName string // 在open时是路径名，其他时候是文件名
+	PathName string // 路径名称
+	CheckSum uint64 // 校验位
+	TimeOut  uint32 // 加锁超时参数
 
 	// TODO 权限控制位,现在还没用,因为不确定到底该以什么形式来设置权限
 	ReadAcl   *[]uint64
@@ -92,13 +92,15 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 							//}
 							switch cmd.Op {
 							case "Get":
+								// 不需要管bool返回值是因为ChubbyGoMapGet以""做false的返回值.也符合我们的预期
+								value, _ := kv.KvDictionary.ChubbyGoMapGet(cmd.Key)
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq,
-									Value: kv.KvDictionary[cmd.Key]}
+									Value: value}
 							case "Put":
-								kv.KvDictionary[cmd.Key] = cmd.Value
+								kv.KvDictionary.ChubbyGoMapSet(cmd.Key, cmd.Value)
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 							case "Append":
-								kv.KvDictionary[cmd.Key] += cmd.Value
+								kv.KvDictionary.ChubbyGoMapSet(cmd.Key, cmd.Value)
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 
 							default:
@@ -119,7 +121,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 						kv.mu.Lock()
 
 						if dup, ok := kv.ClientSeqCache[int64(cmd.ClientID)]; !ok || dup.Seq < cmd.Clientseq {
-							if !ok {// 此时显然这个用户是新的，我们创建一个无缓冲的channel
+							if !ok { // 此时显然这个用户是新的，我们创建一个无缓冲的channel
 								// 这里为什么设置3呢，原因是设置通知这里可能出现多次进入但lockserver中还没有取
 								//这种概率极低，我测试了很多次都没有出现，但是理论存在，所以设置一个3作为度
 								kv.ClientInstanceCheckSum[cmd.ClientID] = make(chan uint64, 3)
@@ -193,7 +195,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 											LockTypeName = "ReadLock"
 										}
 										kv.ClientInstanceSeq[cmd.ClientID] <- token
-										if cmd.TimeOut > 0{
+										if cmd.TimeOut > 0 {
 											go func() {
 												// TODO 这里其实还应该考虑数据包往返时延和双方时钟不同步的度,但是服务端大一点不影响正确性
 												time.Sleep(time.Duration(cmd.TimeOut) * time.Millisecond)
@@ -201,7 +203,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 												// 显然这里我们需要目录的node和文件的token
 												PathNode, PathOk := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 												fileNode, FileOk := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName+"/"+cmd.FileName]
-												if PathOk && FileOk{
+												if PathOk && FileOk {
 													// 全部使用最新的值保证删除成功
 													PathNode.Release(fileNode.instanceSeq, cmd.FileName, fileNode.tokenSeq, fileNode.checksum)
 												} else {
@@ -221,6 +223,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
 								if ok {
+									log.Printf("DEBUG : Release token is %d\n", cmd.Token)
 									err := node.Release(cmd.InstanceSeq, cmd.FileName, cmd.Token, cmd.CheckSum)
 									if err == nil {
 										kv.ClientInstanceSeq[cmd.ClientID] <- NoticeSucess // 通知机制
@@ -237,7 +240,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 							case "CheckToken":
 								kv.ClientSeqCache[int64(cmd.ClientID)] = &LatestReply{Seq: cmd.Clientseq}
 								node, ok := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
-								if ok{
+								if ok {
 									err := node.CheckToken(cmd.Token, cmd.FileName)
 									if err == nil {
 										kv.ClientInstanceSeq[cmd.ClientID] <- NoticeSucess // 通知机制
@@ -276,7 +279,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 
 					kv.mu.Unlock()
 
-					if IsSnapShot{
+					if IsSnapShot {
 						kv.rf.CreateSnapshots(msg.Index)
 					}
 				}
@@ -285,10 +288,9 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 	}
 }
 
-
 /*
  * @notes: 因为这个函数中maxraftstate是不变的，RaftStateSize()又是由persist中的锁保护的，所以完全没必要放在临界区内
-*/
+ */
 func (kv *RaftKV) isUpperThanMaxraftstate() bool {
 	if kv.maxraftstate <= 0 { // 小于等于零的时候不执行快照
 		return false

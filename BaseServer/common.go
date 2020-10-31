@@ -134,7 +134,7 @@ type AcquireArgs struct {
 
 type AcquireReply struct {
 	Err         Err
-	InstanceSeq uint64
+	Token uint64
 }
 
 type ReleaseArgs struct {
