@@ -17,7 +17,7 @@
 
 /*
  * 这个代码的原型来自于: https://github.com/halfrost/Halfrost-Field/blob/master/contents/Go/go_map_bench_test/concurrent-map/concurrent_map.go
- * 我修改了其中的哈希算法
+ * 我修改了其中的哈希算法;
  */
 
 package BaseServer
@@ -73,7 +73,7 @@ func NewConcurrentMap() *ConcurrentHashMap {
  * @brief: 利用key得到哈希表内的桶
  */
 func (m ConcurrentHashMap) GetShard(key string) *ConcurrentMapShared {
-	return m.ThreadSafeHashMap[uint(xxhash_key(key))%uint(SHARD_COUNT)]
+	return m.ThreadSafeHashMap[uint(xxhash_key(key))%uint(m.BucketNumber)]
 }
 
 func (m ConcurrentHashMap) MSet(data map[string]interface{}) {
@@ -335,4 +335,44 @@ func xxhash_key(key string) uint32 {
 	xxh := xxhash.New32()
 	xxh.Write(str2sbyte(key))
 	return xxh.Sum32()
+}
+
+/*
+ * @brief: 用于与一般ChubbyGoMap作比较
+ */
+type BaseMap struct {
+	sync.Mutex
+	m map[string]interface{}
+}
+
+func NewBaseMap() *BaseMap{
+	return &BaseMap{
+		m: make(map[string]interface{}, 100),
+	}
+}
+
+func (myMap *BaseMap) BaseStore(k string, v interface{}) {
+	myMap.Lock()
+	defer myMap.Unlock()
+	myMap.m[k] = v
+}
+
+func (myMap *BaseMap) BaseGet(k string) interface{} {
+	myMap.Lock()
+	defer myMap.Unlock()
+	if v, ok := myMap.m[k]; !ok {
+		return -1
+	} else {
+		return v
+	}
+}
+
+func (myMap *BaseMap) BaseDelete(k string) {
+	myMap.Lock()
+	defer myMap.Unlock()
+	if _, ok := myMap.m[k]; !ok {
+		return
+	} else {
+		delete(myMap.m, k)
+	}
 }

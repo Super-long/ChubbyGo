@@ -332,8 +332,7 @@ func (cfg *ClientConfig) Release(fd *BaseServer.FileDescriptor, token uint64) bo
 
 /*
  * @param: 给出文件名和手中持有的token，返回**此时刻**token是否有效
- * @brief:
- * 可以传入绝对路径和相对路径，也不能叫相对路径
+ * @brief: 可以传入绝对路径和相对路径，也不能叫相对路径
  */
 func (cfg *ClientConfig) CheckToken(AbsolutePath string, token uint64) bool {
 	index := strings.LastIndex(AbsolutePath, "/")
