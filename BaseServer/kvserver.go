@@ -50,7 +50,7 @@ type RaftKV struct {
 
 	// 需要持久化的信息
 	snapshotIndex int								// 现在日志上哪一个位置以前都已经是快照了，包括这个位置
-	KvDictionary            *ChubbyGoConcurrentMap		// 字典
+	KvDictionary            *ChubbyGoConcurrentMap	// 改为并发map以后性能提升了百分之三十左右
 	ClientSeqCache 			map[int64]*LatestReply	// 用作判断当前请求是否已经执行过
 
 	// 以下两项均作为通知机制;注意,协商以0为无效值,这样可以避免读取时锁的使用,ClientInstanceSeq用作instance和token
@@ -132,7 +132,7 @@ func (kv *RaftKV) Get(args *GetArgs, reply *GetReply) error {
 			return nil
 		}
 
-		// 改成ChubbyGoMap以后就不需要加锁mu.lock了;以此提升并发度
+		// 改成ChubbyGoMap以后就不需要加锁mu.lock了;以此提升并发度;
 		// log.Printf("DEBUG : Now key(%s).\n", args.Key)
 		if value, ok := kv.KvDictionary.ChubbyGoMapGet(args.Key); ok {
 			reply.Value = value
@@ -240,7 +240,7 @@ func (kv *RaftKV) readSnapshot(data []byte) {
 
 }*/
 
-func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate int) *RaftKV {
+func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate int, chubbygomap uint32) *RaftKV {
 	gob.Register(KvOp{})
 	gob.Register(FileOp{})
 
@@ -250,8 +250,7 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 
 	kv.applyCh = make(chan Raft.ApplyMsg)
 
-	// TODO 这里需要读取一手配置文件选择策略
-	kv.KvDictionary = NewChubbyGoMap(SyncMap)
+	kv.KvDictionary = NewChubbyGoMap(chubbygomap)
 	kv.ClientInstanceSeq = make(map[uint64]chan uint64)
 	kv.ClientInstanceCheckSum = make(map[uint64]chan uint64)
 	kv.LogIndexNotice = make(map[int]chan struct{})
@@ -264,7 +263,7 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 	var Isok int32 = 0	// 最大只能是1 因为只有在连接成功的时候会加一次
 	kv.ConnectIsok = &Isok
 
-	// 开始的时候读取快照
+	// 开始的时候读取快照,当遇到open文件失效的
 	kv.readSnapshot(persister.ReadSnapshotFromFile())
 	// ps：很重要,因为从文件中读取的值只是字段，还没有存在persister中,只有存了以后才可以持久化成功,否则会出现宕机重启后snapshot.hdb为0
 	kv.persisterSnapshot(kv.snapshotIndex)	// 这样写会导致起始snapshot.hdb文件大小为76,不过问题不大,因为必须这样做

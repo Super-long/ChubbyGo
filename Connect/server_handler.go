@@ -18,8 +18,8 @@
 package Connect
 
 import (
-	"ChubbyGo/Flake"
 	"ChubbyGo/BaseServer"
+	"ChubbyGo/Flake"
 	"ChubbyGo/Persister"
 	"log"
 	"net"
@@ -52,6 +52,7 @@ type ServerConfig struct {
 	SnapshotFileName	string	`json:"snapshotfilename"`	// 快照的持久化文件名
 	RaftstateFileName	string	`json:"raftstatefilename"`	// raft状态的持久化名
 	PersistenceStrategy string	`json:"persistencestrategy"`// 对应着三条策略 见persister.go 注意配置文件中不能拼写错误
+	ChubbyGoMapStrategy string  `json:"chubbygomapstrategy"`// 对应两条策略:syncmap,concurrentmap;详细见chubbygomap.go
 }
 
 /*
@@ -150,18 +151,22 @@ func (cfg *ServerConfig) connectAll() error {
  * @brief: 把raft和kvraft的挂到RPC上
  */
 func (cfg *ServerConfig) serverRegisterFun() {
-
+	// 注册RPC时只要结构体中有不符合要求的成员函数存在就会打印日志,挺烦的
 	// 把RaftKv挂到RPC上
 	err := rpc.Register(cfg.kvserver)
 	if err != nil {
 		// RPC会把全部函数中满足规则的函数注册，如果存在不满足规则的函数则会返回err
 		log.Println(err.Error())
+	} else {
+		log.Println("INFO : Kvserver has been successfully registered.")
 	}
 
 	// 把Raft挂到RPC上
 	err1 := rpc.Register(cfg.kvserver.GetRaft())
 	if err1 != nil {
 		log.Println(err1.Error())
+	} else {
+		log.Println("INFO : Raft has been successfully registered.")
 	}
 
 	// 通过函数把mathutil中提供的服务注册到http协议上，方便调用者可以利用http的方式进行数据传输
@@ -230,6 +235,11 @@ func (cfg *ServerConfig) checkJsonParser() error {
 		return ErrorInParserConfig(parser_persistence_strategy)
 	}
 
+	// 解析ChubbyGoMapStrategy是否符合规范
+	if !checkChubbyGoMapStrategy(cfg.ChubbyGoMapStrategy){
+		return ErrorInParserConfig(parser_chubbygomap_strategy)
+	}
+
 	return nil
 }
 
@@ -263,7 +273,7 @@ func (cfg *ServerConfig) StartServer() error {
 	}
 
 	// 这里初始化的原因是要让注册的结构体是后面运行的结构体
-	cfg.kvserver = BaseServer.StartKVServerInit(cfg.me, cfg.persister, cfg.MaxRaftState)
+	cfg.kvserver = BaseServer.StartKVServerInit(cfg.me, cfg.persister, cfg.MaxRaftState, transformChubbyGomap2uint32(cfg.ChubbyGoMapStrategy))
 	cfg.kvserver.StartRaftServer(&cfg.ServersAddress)
 
 	cfg.serverRegisterFun()

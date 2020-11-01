@@ -25,6 +25,15 @@ import (
 type FileOperation struct {
 	pathToFileSystemNodePointer map[string]*FileSystemNode
 	root                        *FileSystemNode // 根节点
+	/*
+	 * 这一项其实是考虑到ChubbyGo文件系统是一个虚拟存在的文件系统;
+	 * 文件名的解析不需要遵循POSIX，而且大概率会以url作为文件名，所以在配置文件中加入判断url是否合法的选项;
+	 * 此项会在文件系统插入新文件的时候被使用;
+	 * PS: 目前不打算加入这功能了，因为url中'/'是有效字符，这样会导致使用文件描述符的操作出现问题，
+	 * 其实也很好解决，加一个字段标记就可以了。但是目前看来这个功能并不迫切。
+	 * TODO 后面需要的时候再加
+	 */
+	//fileNameIsUri				bool
 }
 
 func InitFileOperation() *FileOperation {
@@ -42,7 +51,7 @@ func InitFileOperation() *FileOperation {
 // 如果把这个放在Kvraft中fileSystem操作时会非常麻烦
 var RootFileOperation = InitFileOperation()
 
-// 其中重复代码很多不修改的原因很多地方类型都不一样,减少代码行数就需要反射,会降低可读性;
+// 其中重复代码很多不修改的原因很多地方类型都不一样,减少代码行数就需要反射,会降低可读性与性能;
 func (kv *RaftKV) Open(args *OpenArgs, reply *OpenReply) error {
 
 	if atomic.LoadInt32(kv.ConnectIsok) == 0 {
@@ -268,7 +277,7 @@ func (kv *RaftKV) Acquire(args *AcquireArgs, reply *AcquireReply) error {
 		}
 
 		reply.Token = <- kv.ClientInstanceSeq[args.ClientID]
-		log.Printf("DEBUG : lockserver Acquire token is %d.\n", reply.Token)
+		//log.Printf("DEBUG : lockserver Acquire token is %d.\n", reply.Token)
 
 		// 当返回值为1的时候没有问题
 		if reply.Token == NoticeErrorValue {

@@ -339,8 +339,15 @@ func (cfg *ClientConfig) CheckToken(AbsolutePath string, token uint64) bool {
 	return cfg.clk.CheckToken(AbsolutePath[0:index], AbsolutePath[index+1:], token)
 }
 
-func (cfg *ClientConfig) CheckTokenAt(pathname string, filename string, token uint64) bool{
+func (cfg *ClientConfig) CheckTokenAt(pathname string, filename string, token uint64) bool {
 	return cfg.clk.CheckToken(pathname, filename, token)
+}
+
+/*
+ * @brief: FastGet不提供任何一致性保证，适用于读极多写极少的情况，此时讲并发map的策略改为syncmap更优，性能可以提升百分之二十到三十
+ */
+func (cfg *ClientConfig) FastGet(key string) string {
+	return cfg.clk.FastGet(key)
 }
 
 // --------------------------

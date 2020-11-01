@@ -49,13 +49,41 @@ const (
 	ReleaseBeforeAcquire
 	OnlyDirectoriesCanCreateFiles
 	TokenSeqError
+	FileNameError
 )
 
 func (err ChubbyGoFileSystemError) Error() string{
 	var ans string
 	switch err {
 	case PathError:
-		ans = "Connection to a target server greater than or equal to timeout."
+		ans = "Filename and directory have some name."
+		break
+	case CheckSumError:
+		ans = "Client send a error CheckSum."
+		break
+	case InstanceSeqError:
+		ans = "Client send a error InstanceSeq."
+		break
+	case DoesNotSupportRecursiveDeletion:
+		ans = "Does not support recursive deletion, there are still files in this directory."
+		break
+	case CannotDeleteFilesWithZeroReferenceCount:
+		ans = "Deleting a file with a reference count of zero."
+		break
+	case LockTypeError:
+		ans = "Lock type error."
+		break
+	case ReleaseBeforeAcquire:
+		ans = "The lock being released has not been locked."
+		break
+	case OnlyDirectoriesCanCreateFiles:
+		ans = "Only directories can create files."
+		break
+	case TokenSeqError:
+		ans = "Client send a error TokenSeq."
+		break
+	case FileNameError:
+		ans = "The inserted file has disallowed characters."
 		break
 	default:
 
@@ -161,7 +189,15 @@ func (Fsn *FileSystemNode) Insert(InstanceSeq uint64, Type int, name string, Rea
 		return 0, 0, ChubbyGoFileSystemError(OnlyDirectoriesCanCreateFiles)
 	}
 
-	// TODO 忘记加文件名称解析了，可能被字符串攻击
+	// 文件名只要不包含'/'和' '就可以了，后面加上url判断以后需要修改这里
+	bytesFileName := str2sbyte(name)
+	bytesLength := len(bytesFileName)
+	for i:=0; i<bytesLength;i++{
+		if bytesFileName[i] == '/' || bytesFileName[i] == ' '{
+			return 0, 0, ChubbyGoFileSystemError(FileNameError)
+		}
+	}
+
 	// 目录与文件不可以重名
 	_, IsExist := Fsn.next[name]
 	if IsExist { // Fsn中存在着与这个文件文件名相同的文件
@@ -354,7 +390,7 @@ func (Fsn *FileSystemNode) Release(InstanceSeq uint64, filename string, Token ui
 		对于一个目录来说open可以使其获取句柄后创建文件;
 */
 func (Fsn *FileSystemNode) Open(name string) (uint64, uint64) {
-	// TODO 这里应该做一些权限的检测，但是现在并没有想好如何划分权限，先不急，返回当前InstanceSeq
+	// TODO 这里应该做一些权限的检测，但是现在并没有想好如何划分权限
 
 	// Open返回的应该是本文件的instanceSeq
 	return Fsn.instanceSeq, Fsn.checksum

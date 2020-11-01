@@ -47,7 +47,7 @@ func (ck *Clerk) Open(pathname string) (bool,*FileDescriptor) {
 			err := ck.servers[ck.leader].Call("RaftKV.Open", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Open call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag
@@ -98,7 +98,7 @@ func (ck *Clerk) Create(fd *FileDescriptor, Type int, filename string) (bool, *F
 			err := ck.servers[ck.leader].Call("RaftKV.Create", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Create call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag
@@ -149,7 +149,7 @@ func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, op
 			err := ck.servers[ck.leader].Call("RaftKV.Delete", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Delete call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag
@@ -175,7 +175,7 @@ func (ck *Clerk) Delete(pathname string, filename string, instanceseq uint64, op
 /*
  * @brief: 对Fd目录下的Filename进行加锁,可以加读锁或者写锁,加锁不需要open
  * @param: 实例号和路径名来源于文件描述符;文件类型;文件名称
- * @return: 返回加锁是否成功; TODO 后面可以在clerk写两个函数，其中一个只传递一个fd，最后解析一手就ok
+ * @return: 返回加锁是否成功;
  */
 func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, LockType int, checksum uint64, timeout uint32) (bool, uint64) {
 	cnt := len(ck.servers)
@@ -198,7 +198,7 @@ func (ck *Clerk) Acquire(pathname string, filename string, instanceseq uint64, L
 			err := ck.servers[ck.leader].Call("RaftKV.Acquire", args, reply)
 			flag := true
 			if err != nil {	// TODO 客户端存在巨大的问题,没有断线重连机制
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Acquire call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag
@@ -251,7 +251,7 @@ func (ck *Clerk) Release(pathname string, filename string, instanceseq uint64, t
 			err := ck.servers[ck.leader].Call("RaftKV.Release", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Release call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag
@@ -299,7 +299,7 @@ func (ck *Clerk) CheckToken(pathname string, filename string, token uint64) bool
 			err := ck.servers[ck.leader].Call("RaftKV.CheckToken", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : CheckToken call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag

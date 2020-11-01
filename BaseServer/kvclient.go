@@ -83,7 +83,7 @@ func (ck *Clerk) Get(key string) string {
 			err := ck.servers[ck.leader].Call("RaftKV.Get", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Get call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag
@@ -128,7 +128,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			err := ck.servers[ck.leader].Call("RaftKV.PutAppend", args, reply)
 			flag := true
 			if err != nil {
-				log.Fatal(err.Error())
+				log.Printf("ERROR : Putappend call error, Find the cause as soon as possible -> (%s).\n", err.Error())
 				flag = false
 			}
 			replyArrival <- flag

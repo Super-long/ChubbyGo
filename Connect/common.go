@@ -18,6 +18,7 @@
 package Connect
 
 import (
+	"ChubbyGo/BaseServer"
 	"math"
 	"net"
 	"strconv"
@@ -105,6 +106,7 @@ const (
 	parser_snapshot_file_name
 	parser_raftstate_file_name
 	parser_persistence_strategy
+	parser_chubbygomap_strategy
 )
 
 func (err ErrorInParserConfig) Error() string {
@@ -136,6 +138,9 @@ func (err ErrorInParserConfig) Error() string {
 		break
 	case parser_persistence_strategy:
 		ans = "No such persistence strategy."
+		break
+	case parser_chubbygomap_strategy:
+		ans = "no such chubbygomap strategy."
 		break
 	default:
 	}
@@ -206,7 +211,7 @@ func ParserIP(address string) bool {
  * 	getconf NAME_MAX /usr 获取文件名称长度限制;255
  *	还有一点是我个人的要求,后缀必须是hdb,就是这么傲娇
  * 文件名的限制 : https://en.wikipedia.org/wiki/Filename
- * 目前搜到的文件名限制就是不允许采用"/"和"null",且"-"不能是第一个字符
+ * 目前搜到的文件名限制就是不允许采用"/"和" ",且"-"不能是第一个字符
  */
 func ParserFileName(pathname string) bool {
 	Length := len(pathname)
@@ -216,7 +221,7 @@ func ParserFileName(pathname string) bool {
 	}
 
 	index1 := -1 // 标示后缀
-	index2 := 0 // 标示文件名
+	index2 := 0  // 标示文件名
 
 	for i := Length - 1; i >= 0; i-- {
 		if pathname[i] == '.' {
@@ -248,9 +253,14 @@ func ParserFileName(pathname string) bool {
 		return false
 	}
 
-	// TODO 目前只检查了最后一个文件名,在这里检测格式是为了早点检测出错误,因为打开这个文件时协议已经开始,倒也可以使用默认文件
+	// TODO 目前只检查了最后一个文件名,在这里检测格式是为了早点检测出错误,因为打开这个文件时协议已经开始,会导致读取持久化数据失败;倒也可以使用默认文件
+	if pathname[index2+1] == '-' {
+		return false
+	}
+
+	// 因为上面的解析过程这里面的数据不可能存在'/'，只需要检查' '就可以了
 	for i := index2 + 1; i < index1; i++ {
-		if !isEffective(pathname[i]){
+		if pathname[i] == ' ' {
 			return false
 		}
 	}
@@ -278,63 +288,39 @@ func ReturnInterval(n int) int {
 }
 
 /*
- * @brief: 对不齐就很烦,go Ctrl+Alt+L 会自动把注释后推;考虑到可能使用url作为文件名
- */
-var iseffective = [128]bool{
-	/*0   nul    soh    stx    etx    eot    enq    ack    bel     7*/
-	false, false, false, false, false, false, false, false,
-	/*8   bs     ht     nl     vt     np     cr     so     si     15*/
-	false, false, false, false, false, false, false, false,
-	/*16  dle    dc1    dc2    dc3    dc4    nak    syn    etb    23*/
-	false, false, false, false, false, false, false, false,
-	/*24  can    em     sub    esc    fs     gs     rs     us     31*/
-	false, false, false, false, false, false, false, false,
-	/*32  ' '    !      "      #     $     %     &     '          39*/
-	false, false, false, true, true, true, true, false,
-	/*40  (      )      *      +     ,     -     .     /          47*/
-	false, false, false, true, true, true, true, true,
-	/*48  0     1     2     3     4     5     6     7             55*/
-	true, true, true, true, true, true, true, true,
-	/*56  8     9     :     ;     <      =     >      ?           63*/
-	true, true, true, true, false, true, false, true,
-	/*64  @     A     B     C     D     E     F     G             71*/
-	true, true, true, true, true, true, true, true,
-	/*72  H     I     J     K     L     M     N     O             79*/
-	true, true, true, true, true, true, true, true,
-	/*80  P     Q     R     S     T     U     V     W             87*/
-	true, true, true, true, true, true, true, true,
-	/*88  X     Y     Z     [      \      ]      ^      _         95*/
-	true, true, true, false, false, false, false, true,
-	/*96  `      a     b     c     d     e     f     g           103*/
-	false, true, true, true, true, true, true, true,
-	/*104 h     i     j     k     l     m     n     o            113*/
-	true, true, true, true, true, true, true, true,
-	/*112 p     q     r     s     t     u     v     w            119*/
-	true, true, true, true, true, true, true, true,
-	/*120 x     y     z     {      |      }      ~      del      127*/
-	true, true, true, false, false, false, false, false,
-}
-
-/*
- * @brief: 判断文件名是否出现错误
- */
-func isEffective(ch byte) bool {
-	if ch < 0 { //|| ch > 127{ 	显然不太可能
-		return false
-	} else {
-		return iseffective[ch]
-	}
-}
-
-/*
  * @brief: 解析文件中的持久化策略是否正确,目前只有三种有效的策略
  */
-func checkPersistenceStrategy(strategy string) bool{
+func checkPersistenceStrategy(strategy string) bool {
 	lower := strings.ToLower(strategy)
 
-	if lower != "everysec" && lower != "no" && lower != "always"{
+	if lower != "everysec" && lower != "no" && lower != "always" {
 		return false
 	}
 
 	return true
+}
+
+/*
+ * @brief: 解析chubbygomap的map策略
+ */
+func checkChubbyGoMapStrategy(strategy string) bool {
+	lower := strings.ToLower(strategy)
+
+	if lower != "syncmap" && lower != "concurrentmap" {
+		return false
+	}
+
+	return true
+}
+
+/*
+ * @brief: 已经经历过checkjson,只可能有两种情况
+ */
+func transformChubbyGomap2uint32(strategy string) uint32 {
+	lower := strings.ToLower(strategy)
+	if lower == "syncmap"{
+		return BaseServer.SyncMap
+	} else {
+		return BaseServer.ConcurrentMap
+	}
 }

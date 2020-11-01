@@ -14,6 +14,12 @@ import (
  *		目前并没有什么好的解决方案，因为这是flake算法的局限，暂时不想为测试文件重改flake
  */
 
+const(
+	get = iota
+	fastGet
+)
+const GetStrategy = get
+
 func main(){
 	n := 60
 	Sem := make(Connect.Semaphore, n)
@@ -26,7 +32,7 @@ func main(){
 		if err != nil {
 			log.Println(err.Error())
 		} else {	// 显然连接成功以后才可以
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*60))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*4))	// 想多次重试OK就每次把这里的0每次递增1就ok
 			flags[i] = true
 		}
 	}
@@ -42,7 +48,15 @@ func main(){
 				nv := "x " + strconv.Itoa(cliID) + " " + strconv.Itoa(j) + " y"
 				clientConfigs[cliID].Put(strconv.Itoa(cliID),nv)
 				fmt.Println(cliID," : put 成功, ", nv)
-				res := clientConfigs[cliID].Get(strconv.Itoa(cliID))
+				var res string
+				if GetStrategy == get {
+					res = clientConfigs[cliID].Get(strconv.Itoa(cliID))
+				} else if GetStrategy == fastGet{
+					res = clientConfigs[cliID].FastGet(strconv.Itoa(cliID))
+				} else {
+					log.Println("Error Get Strategy.")
+					return
+				}
 				if res != nv {
 					fmt.Printf("%d : expected: %s, now : %s\n",cliID, nv, res)
 				} else {

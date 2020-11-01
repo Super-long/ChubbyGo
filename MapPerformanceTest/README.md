@@ -1,4 +1,3 @@
-[![License](http://www.apache.org/licenses/LICENSE-2.0)](LICENSE)
 # Introduction
 对于线程安全的hashmap的选取是性能提升的一个重点，摆在面前的有三种选择，BaseMap，sync.map以及concurrentMap。
 
@@ -70,4 +69,4 @@ BaseMap| 4346 | 139| 19
 ## summary
 由以上数据可以看出sync.map涉及Put的操作中效率都比较低，而在Get较多的时候效率极高，其实这也很好想象，因为此时sync.map中的读操作是完全无锁的，有兴趣的朋友可以看源码了解。
 
-因为ChubbyGo中的FastGet操作是不操作ChubbyGoMap的，再加上如上的性能测试，我们可以得出结论：当使用ChubbyGo为读多写少时选择SyncMap策略，其他时候均使用ConcurrentMap策略，可在json配置文件中进行配置。
+因为ChubbyGo中的FastGet操作是不操作ChubbyGoMap的，再加上如上的性能测试，我们可以得出结论：当使用ChubbyGo为读极多写极少时选择SyncMap策略，其他时候均使用ConcurrentMap策略，可在json配置文件中进行配置。

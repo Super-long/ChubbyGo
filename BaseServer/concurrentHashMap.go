@@ -38,7 +38,7 @@ func str2sbyte(s string) (b []byte) {
 	return
 }
 
-// TODO 桶的数量应该可以自己配置
+// TODO 桶的数量应该可以自己配置,因为xxhash的性能很优秀,所以越大的数据越适合更多的桶
 var SHARD_COUNT = 32
 
 

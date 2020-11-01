@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 )
 
+/* 测试ChubbyGo的功能是否ok. */
+
 func main() {
 	GoroutinueNumber := 1
 	// 可选的,SyncMap或者ConcurrentMap
@@ -42,5 +44,7 @@ func main() {
 
 	if atomic.LoadUint32(&ErrorNumber) == 0{
 		fmt.Println("PASS.")
+	} else {
+		fmt.Println("Not Pass.")
 	}
 }
