@@ -1,17 +1,21 @@
 
 # ChubbyGo
 
-[外链图片转存失败,源站可能有防盗链机制,建议将图片保存下来直接上传(img-Ap69YJYO-1604219339346)(Pictures/ChubbyGo.jpg)]
+![avatar](Pictures/ChubbyGo.jpg)
 This cute Totoro's name is Go, and he may be a friend of Tux!
 这个可爱的龙猫的名字叫做Go，他也许是Tux的朋友！
 
-## 1.Description
+## 1.说明
 
 要运行ChubbyGo需要引入以下两个三方库：
 1. github.com/sony/sonyflake
 2. github.com/OneOfOne/xxhash
 
-## 2.Introduction
+---
+1. ChubbyGo.pdf为ChubbyGo的架构图。
+2. LockServer.pdf为ChubbyGo锁服务的架构图。
+
+## 2.介绍
 
 ChubbyGo是一个基于**Raft协议**的分布式锁服务，其提供了在低耦合分布式系统中**粗粒度的锁定**和**可靠的存储**。
 
@@ -26,7 +30,7 @@ ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提
 4. 本身可以存储少量的信息，所以可以作为**nameserver**。
 5. 本身提供get/set接口，可以作为一个**可靠的键值服务器**。
 
-## 3.Implement
+## 3.实现
 因为我的精力与水平有限，暂时没办法实现论文上的全部细节，且一些地方为了能更为简洁与简单的实现，选择了和论文中不同的策略，本节中描述分为四个部分:
 1. **与Chubby目前设计的不同之处**;
 2. **目前已经完成的工作**;
@@ -50,7 +54,7 @@ ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提
 8. flake算法初始机器标识符生成函数是拿内网IP计算，客户端使用会有很大问题，所以加入了**自定义的机器标识符生成函数**;
 9. 持久化完成，**模仿Redis提供三种策略**:always,everysec,no;
 10. 允许服务器宕机重启，并读取持久化数据，并重新加入原集群，整个**集群继续对外提供服务**;
-11. 实现**类Unix文件系统接口**以提供编程人员更熟悉的**分布式锁**接口;
+11. 实现**类Unix文件系统接口**以提供编程人员更熟悉的**分布式锁**接口。客户端通过open可以得到一个句柄，此时认为建立了一个会话，客户端通过句柄发出请求，句柄含有文件内容的校验和，难以伪造。
 12. 引入ChubbyGoMap，**允许根据客户根据预期的请求类型动态的配置线程安全的hashmap类型**以提升并发度;
 13. 支持不经过Raft层的fastget请求，此请求不保证任何程度的一致性，但在多读情况下有百分之三十左右的性能提升;
 
@@ -61,9 +65,10 @@ ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提
 3. 在处理Raft层处发现条件竞争，暂定策略为修改文件系统节点定义，使全部文件系统操作不需要其他锁保护(Processdamen.go Acquire处理逻辑)。
 4. 文件系统的权限定义目前尙不明确，即FileSystemNode中的ACLs部分，如何组织权限关系是一个需要思考的问题。
 5. 后面是否支持目录的递归删除，因为目录下的文件可能还存在锁(fileSystem.go -> func Delete)。
-6. ChubbyGoFileSystem中对于锁的操作可能导致写锁饥饿(fileSystem.go -> func Release)。
+6. ChubbyGoFileSystem中对于锁的操作可能导致写锁饥饿和羊群效应(fileSystem.go -> func Release)。这个问题目前想到的解决方案是模仿ZooKeeper避免羊群效应的做法，给这个锁文件下创建N个临时文件，当锁被释放以后通知N个中的第一个，以此避免写锁饥饿和羊群效应。
 7. Acquire的超时参数到服务器端，需要计算包的传播时延和时钟不同步的度，当然服务器大一点对正确性影响并不大。
 8. 创建文件时可以引入一个计数器，类似于信号量机制，以支持秒杀。
+9. 可以实现一个CountDownLatch，让多个客户端同步执行，类似与ZooKeeper的Double Barrier。
 ---
 1. 不支持客户端订阅事件。
 2. 不支持数据的客户端缓存。
@@ -96,7 +101,7 @@ ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提
 6. **snapshotfilename**: 快照的文件名。
 7. **raftstatefilename**: Raft信息持久化的文件名。
 8. **persistencestrategy**: 持久化策略，分为三种"always","everysec","no"。
-9. **chubbygomapstrategy**: 线程安全的哈希map的，分为两种"concurrentmap","syncmap"。
+9. **chubbygomapstrategy**: 线程安全的哈希map的策略，分为两种"concurrentmap","syncmap"。
 
 ### 4.2 client_config.json
 1. **client_address**: 对端服务器的地址。
@@ -212,15 +217,8 @@ ChubbyGo/MapPerformanceTest/README.md
 2. **lock_base.go**: 执行锁的全部基础操作。
 3. **lock_expand.go**: 并发的请求读锁和写锁。
 
-## 7.Thanks
-感谢宋辉老师提出的宝贵意见。
-
-感谢李浩提供了一种更优的服务器启动时间间隔处理函数。
-
-感谢李怡提供了ChubbyGo Logo第一版与第二版的设计，由此才产生了Go这个可爱的小家伙儿。
-
 ## 7.其他
-这是我对于ChubbyGo的一些想法与安全性论证：
+以下是我对于ChubbyGo的一些想法与安全性论证：
 1. [《Using ChubbyGo ！Join in ChubbyGo！》](https://blog.csdn.net/weixin_43705457/article/details/109446869)
 2. 
 
@@ -228,3 +226,14 @@ ChubbyGo/MapPerformanceTest/README.md
 1. 《The Chubby lock service for loosely-coupled distributed systems》
 2. 《In Search of an Understandable Consensus Algorithm(Extended Version)》
 3. 《ZooKeeper: Wait-free coordination for Internet-scale systems》
+
+## 9.致谢
+感谢XiyouLinux兴趣小组老师，学长学姐的培养以及同学的支持。
+
+感谢宋辉老师提出的宝贵意见。
+
+感谢李浩提供了一种更优的服务器启动时间间隔处理函数。
+
+感谢李怡提供了ChubbyGo Logo第一版与第二版的设计，由此才产生了Go这个可爱的小家伙儿。
+
+![avatar](Pictures/XiyouLinuxGroup.png)
