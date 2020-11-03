@@ -20,7 +20,6 @@ package Config
 import (
 	"ChubbyGo/Connect"
 	"encoding/json"
-	"fmt"
 	io "io/ioutil"
 	"log"
 	"sync"
@@ -34,7 +33,6 @@ func init(){
 
 func LoadServerConfig(filename string, cfg *Connect.ServerConfig) bool {
 
-	fmt.Println(filename)
 	Server_file_locker.Lock()
 	data, err := io.ReadFile(filename) //read config file
 	Server_file_locker.Unlock()

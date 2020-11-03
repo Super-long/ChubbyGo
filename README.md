@@ -197,6 +197,7 @@ go run lock_expand.go
 目前的测试代码分为几个部分：
 1. 对于BaseMap，Sync.Map，ConcurrentMap的性能对比，解释了最终选择ChubbyGoMap的原因，在最优的性能下提供最大的灵活性。
 2. 三个测试文件的定义。
+3. 与Redis与ZooKeeper的性能对比，主要对于客户端多线程请求1000个事务的响应时间。
 ### 6.1 MapPerformanceTest
 测试代码位于：
 ```shell
@@ -212,13 +213,30 @@ go test -v -run=^$ -bench . -benchmem
 ```shell
 ChubbyGo/MapPerformanceTest/README.md
 ```
-### 功能测试
+### 6.2功能测试
 1. **client_base.go**: 并发的执行get/set,可以自行配置并发的协程数和选择Get或者FastGet。
 2. **lock_base.go**: 执行锁的全部基础操作。
 3. **lock_expand.go**: 并发的请求读锁和写锁。
 
+### 6.2性能测试
+**ChubbyGo:**
+
+| 线程数 | 总请求数 | 总花费时间/ms| TPS|RT/ms|
+:-----:|:-----:|:-----:|:-----:|:-----:|
+10| 1000 | 2707.629| 370 | 2.70
+20|1000|1364.017|733|1.36
+30|1000| 1257.110|796|1.25
+40|1000|866.033|1154|0.86
+50|1000|800.677|1249|0.80
+60|1000|682.100|1466|0.68
+70|1000|637.607|1570|0.63
+100|1000|599.110|1669| 0.59
+
+Redis:
+
+
 ## 7.其他
-以下是我对于ChubbyGo的一些想法与安全性论证：
+以下是我对于ChubbyGo的一些想法,安全性论证与展望：
 1. [《Using ChubbyGo ！Join in ChubbyGo！》](https://blog.csdn.net/weixin_43705457/article/details/109446869)
 2. 
 

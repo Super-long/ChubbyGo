@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 )
 
 /*
@@ -18,10 +19,10 @@ const(
 	get = iota
 	fastGet
 )
-const GetStrategy = get
+const GetStrategy = fastGet
 
 func main(){
-	n := 60
+	n := 30
 	Sem := make(Connect.Semaphore, n)
 	SemNumber := 0
 	clientConfigs := make([]*Connect.ClientConfig,n)
@@ -32,10 +33,12 @@ func main(){
 		if err != nil {
 			log.Println(err.Error())
 		} else {	// 显然连接成功以后才可以
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*4))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*0))	// 想多次重试OK就每次把这里的0每次递增1就ok
 			flags[i] = true
 		}
 	}
+
+	start := time.Now()
 
 	for i := 0; i < n; i++{
 		if !flags[i]{
@@ -67,6 +70,11 @@ func main(){
 	}
 
 	Sem.V(SemNumber)
+
+	cost := time.Since(start)
+
+	fmt.Printf("%d个线程 : %d 个请求花费了 %s.\n",n, n*20, cost)
+
 	for i:=0 ;i < len(flags);i++{
 		if flags[i]{	// 至少一台服务器连接成功并执行完才算是PASS
 			fmt.Println("PASS!")

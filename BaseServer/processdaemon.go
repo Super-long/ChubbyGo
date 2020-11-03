@@ -198,7 +198,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 										if cmd.TimeOut > 0 {
 											go func() {
 												// TODO 这里其实还应该考虑数据包往返时延和双方时钟不同步的度,但是服务端大一点不影响正确性
-												time.Sleep(time.Duration(cmd.TimeOut) * time.Millisecond)
+												time.Sleep(time.Duration(cmd.TimeOut * 2) * time.Millisecond)
 												// TODO 显然有条件竞争 后面改这里架构的时候再说 这里是一个难点中的难点 因为kv.mu已经成了性能瓶颈了
 												// 显然这里我们需要目录的node和文件的token
 												PathNode, PathOk := RootFileOperation.pathToFileSystemNodePointer[cmd.PathName]
