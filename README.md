@@ -11,6 +11,9 @@ This cute Totoro's name is Go, and he may be a friend of Tux!
 1. github.com/sony/sonyflake
 2. github.com/OneOfOne/xxhash
 
+Redis的测试代码需要引入以下三方库：
+1. github.com/redis/hiredis
+
 ---
 1. ChubbyGo.pdf为ChubbyGo的架构图。
 2. LockServer.pdf为ChubbyGo锁服务的架构图。
@@ -23,7 +26,7 @@ ChubbyGo是一个基于**Raft协议**的分布式锁服务，其提供了在低�
 
 为更高级别的抽象，以实现一个分布式协调中心，以此留给客户端更多的自由，但相应的带来了复杂度。为了更简单的使用，我根据论文实现了Chubby，并命名为**ChubbyGo**。
 
-ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提供易于理解的语义与小规模可靠的存储。你可以使用ChubbyGo完成以下工作:
+ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提供易于理解的语义与小规模可靠的存储，性能并不是主要考虑的点。你可以使用ChubbyGo完成以下工作:
 1. **为多台服务器进行可靠的选主**，因为最多只有一个服务器可以得到锁。
 2. **对在多主机之间需要保护的资源提供分布式锁服务**。
 3. **允许Master在ChubbyGo上发布消息，客户端可以使用get(key)得到消息**，key为用户定义，推荐使用master得到锁的路径作为key保证唯一性。
@@ -219,6 +222,9 @@ ChubbyGo/MapPerformanceTest/README.md
 3. **lock_expand.go**: 并发的请求读锁和写锁。
 
 ### 6.2性能测试
+1. ChubbyGo为三个节点，一个Leader两个Follower。
+2. Redis为四个节点，一个Sentinel，一个Leader，两个Follower。
+
 **ChubbyGo:**
 
 | 线程数 | 总请求数 | 总花费时间/ms| TPS|RT/ms|
@@ -232,7 +238,19 @@ ChubbyGo/MapPerformanceTest/README.md
 70|1000|637.607|1570|0.63
 100|1000|599.110|1669| 0.59
 
+---
 Redis:
+
+| 线程数 | 总请求数 | 总花费时间/ms| 
+:-----:|:-----:|:-----:|
+10|1000|23.4833|
+20|1000|21.0819|
+30|1000|27.6231
+40|1000|24.7486|
+50|1000|23.4648|
+60|1000|24.0322|
+70|1000|20.1869|
+100|1000|27.3506|
 
 
 ## 7.其他
