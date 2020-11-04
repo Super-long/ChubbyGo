@@ -24,7 +24,7 @@ ChubbyGo是一个基于**Raft协议**的分布式锁服务，其提供了在低�
 
 大家也许都知道Chubby其实是2006年谷歌发表的论文《The Chubby lock service for loosely-coupled distributed systems》中描述的服务，但是是闭源的，后来雅虎研究院将一个类似的项目捐献给了Apache基金会，这个项目的名字叫做ZooKeeper，并于2010年11月正式成为Apache的顶级项目。
 
-为更高级别的抽象，以实现一个分布式协调中心，以此留给客户端更多的自由，但相应的带来了复杂度。为了更简单的使用，我根据论文实现了Chubby，并命名为**ChubbyGo**。
+Zookeeper为更高级别的抽象，实现了一个分布式协调中心，以此留给客户端更多的自由，但相应的带来了复杂度。为了更简单的使用，我根据论文实现了Chubby，并命名为**ChubbyGo**。
 
 ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提供易于理解的语义与小规模可靠的存储，性能并不是主要考虑的点。你可以使用ChubbyGo完成以下工作:
 1. **为多台服务器进行可靠的选主**，因为最多只有一个服务器可以得到锁。
@@ -46,7 +46,7 @@ ChubbyGo与Chubby的目标一样，都是为了对中等规模的客户端的提
 
 ### 3.2 已完成的工作：
 
-1. raft基础协议完成，包括：**领导人选举，日志复制，日志压缩**；
+1. raft基础协议完成，包括：**领导人选举，日志复制，日志压缩**;
 2. 基于raft协议完成**强一致性的键值服务**，支持get/put请求;
 3. 服务器之间运行前的连接：修改为超时时间倍增的重传，以抹平各机器服务器启动的时间差;
 4. 配置项提取出来，配置文件使用json;
@@ -221,7 +221,7 @@ ChubbyGo/MapPerformanceTest/README.md
 2. **lock_base.go**: 执行锁的全部基础操作。
 3. **lock_expand.go**: 并发的请求读锁和写锁。
 
-### 6.2性能测试
+### 6.3性能测试
 1. ChubbyGo为三个节点，一个Leader两个Follower。
 2. Redis为四个节点，一个Sentinel，一个Leader，两个Follower。
 
@@ -253,10 +253,16 @@ Redis:
 100|1000|27.3506|
 
 
+### 6.4 ChubbyGo的优势
+虽然就目前看来ChubbyGo的性能与主流的锁服务器并不在一个量级，但是后面会针对性能进行进一步修改。当然ChubbyGo对比Redis还是优势的，如下：
+1. 安全的锁服务。Redis的主从复制在CAP中选择了AP，这导致主节点宕机以后被Sentinel选出的新主数据是可能落后与已经宕机的主服务器的，这会导致多客户端持有一把锁，且就这个架构来说没有解决方案。当然使用Redlock可以避免宕机后数据丢失导致多客户端持有一把锁的情况，但是存在时间的问题。相反因为ChubbyGo选择Raft作为底层一致性协议，天然避免了数据丢失的情况。
+2. ChubbyGo不但提供读写锁服务，也可以提供很多其他服务。
+
+
 ## 7.其他
 以下是我对于ChubbyGo的一些想法,安全性论证与展望：
 1. [《Using ChubbyGo ！Join in ChubbyGo！》](https://blog.csdn.net/weixin_43705457/article/details/109446869)
-2. 
+2. [《ChubbyGo的安全性论证与展望》](https://blog.csdn.net/weixin_43705457/article/details/109458119)
 
 ## 8.参考
 1. 《The Chubby lock service for loosely-coupled distributed systems》
