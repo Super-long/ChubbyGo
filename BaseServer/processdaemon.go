@@ -18,7 +18,9 @@
 package BaseServer
 
 import (
+	"fmt"
 	"log"
+	"strconv"
 	"time"
 )
 
@@ -50,6 +52,18 @@ type FileOp struct {
 	ReadAcl   *[]uint64
 	WriteAcl  *[]uint64
 	ModifyAcl *[]uint64
+}
+
+// 用于CAS
+type CASOp struct{
+	ClientID  uint64 // 每个Client的ID
+	Clientseq int    // 这个ClientID上目前的操作数
+
+	Key string
+	Old string		// 思前想去old,new这里还是搞成string比较好，省的在守护线程里面再转换一次，减少临界区的开销
+	New string
+	boundary int	// 当在CAS比较失败的时候进行边界对比，如果还可以容纳一个interval，进行操作。
+	Interval int
 }
 
 /*
@@ -257,6 +271,46 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 						} else {
 							log.Println("ERROR : Multiple clients have the same ID !")
 						}
+					} else if cmd, ok := msg.Command.(CASOp); ok{ // CAS操作
+						// log.Println("INFO : Enter CAS operation.")
+
+						kv.mu.Lock()
+						if dup, ok := kv.ClientSeqCache[int64(cmd.ClientID)]; !ok || dup.Seq < cmd.Clientseq {
+							if !ok {
+								kv.CASNotice[cmd.ClientID] = make(chan bool, 3)
+							}
+							value, err := kv.KvDictionary.ChubbyGoMapGet(cmd.Key)
+							if !err { // 查询失败
+								kv.CASNotice[cmd.ClientID] <- false
+							} else {
+								if value == cmd.Old {
+									// 比较成功直接转换
+									kv.KvDictionary.ChubbyGoMapSet(cmd.Key, cmd.New)
+									kv.CASNotice[cmd.ClientID] <- true
+								} else if cmd.Interval != 0 {
+									nowValue ,flag := strconv.Atoi(value)
+									if flag == nil { // 转化成功
+										if cmd.boundary <= nowValue - cmd.Interval {
+											kv.KvDictionary.ChubbyGoMapSet(cmd.Key, strconv.Itoa(nowValue - cmd.Interval))
+											kv.CASNotice[cmd.ClientID] <- true
+											//log.Printf("DEBUG : 递减目前的值 : %d.\n", nowValue - cmd.Interval)
+										} else if cmd.boundary >= nowValue + cmd.Interval{
+											kv.KvDictionary.ChubbyGoMapSet(cmd.Key, strconv.Itoa(nowValue + cmd.Interval))
+											kv.CASNotice[cmd.ClientID] <- true
+											//log.Printf("DEBUG : 递增目前的值 : %d.\n", nowValue + cmd.Interval)
+										} else {
+											kv.CASNotice[cmd.ClientID] <- false
+										}
+									} else {
+										kv.CASNotice[cmd.ClientID] <- false
+									}
+								} else {
+									// 第一遍少了这里 我服了
+									kv.CASNotice[cmd.ClientID] <- false
+								}
+							}
+						}
+
 					}
 
 					// msg.IsSnapshot && kv.isUpperThanMaxraftstate()
@@ -275,6 +329,7 @@ func (kv *RaftKV) acceptFromRaftDaemon() {
 					if notifyCh, ok := kv.LogIndexNotice[msg.Index]; ok && notifyCh != nil {
 						close(notifyCh)
 						delete(kv.LogIndexNotice, msg.Index)
+						fmt.Printf("Notice index(%d).\n", msg.Index)
 					}
 
 					kv.mu.Unlock()

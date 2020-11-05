@@ -17,6 +17,7 @@
 
 package BaseServer
 
+// TODO 这里有机会全部改成数字，因为每次判断的时候都需要比较，效率较差
 const (
 	OK         = "OK"
 	ErrNoKey   = "ErrNoKey"
@@ -32,6 +33,11 @@ const (
 	AcquireError = "AcquireError"
 	ReleaseError = "ReleaseError"
 	CheckTokenError = "CheckTokenError"
+
+	ValueCannotBeConvertedToNumber = "ValueCannotBeConvertedToNumber"
+	CurrentValueExceedsExpectedValue = "CurrentValueExceedsExpectedValue"
+	CASFlagUndefined = "CASFlagUndefined"
+	CASFailture = "CASFailture"
 	)
 
 // 用于Delete RPC
@@ -160,6 +166,19 @@ type CheckTokenArgs struct {
 }
 
 type CheckTokenReply struct {
+	Err         Err
+}
+
+type CompareAndSwapArgs struct{
+	ClientID 	uint64
+	SeqNo    	int
+	Key			string
+	Old			int
+	New  		int
+	Flag 		int
+}
+
+type CompareAndSwapReply struct {
 	Err         Err
 }
 

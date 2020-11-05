@@ -19,10 +19,10 @@ const(
 	get = iota
 	fastGet
 )
-const GetStrategy = fastGet
+const GetStrategy = get
 
 func main(){
-	n := 30
+	n := 60
 	Sem := make(Connect.Semaphore, n)
 	SemNumber := 0
 	clientConfigs := make([]*Connect.ClientConfig,n)
@@ -33,7 +33,7 @@ func main(){
 		if err != nil {
 			log.Println(err.Error())
 		} else {	// 显然连接成功以后才可以
-			clientConfigs[i].SetUniqueFlake(uint64(i+n*0))	// 想多次重试OK就每次把这里的0每次递增1就ok
+			clientConfigs[i].SetUniqueFlake(uint64(i+n*1))	// 想多次重试OK就每次把这里的0每次递增1就ok
 			flags[i] = true
 		}
 	}
@@ -47,7 +47,7 @@ func main(){
 		SemNumber++
 		go func(cliID int){
 			defer Sem.P(1)
-			for j := 0; j < 10; j++ {
+			for j := 0; j < 8; j++ {
 				nv := "x " + strconv.Itoa(cliID) + " " + strconv.Itoa(j) + " y"
 				clientConfigs[cliID].Put(strconv.Itoa(cliID),nv)
 				fmt.Println(cliID," : put 成功, ", nv)

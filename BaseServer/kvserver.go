@@ -58,6 +58,8 @@ type RaftKV struct {
 	// 仅用于Open操作
 	ClientInstanceCheckSum	map[uint64]chan uint64	// 用作返回给客户端的CheckSum
 
+	CASNotice	map[uint64]chan bool				// 用作CAS操作的通知，因为CAS并不是总是成功
+
 	shutdownCh chan struct{}
 
 	// 显然这个数的最大值就是1，也就是连接成功的时候，且只有两种情况，即0和1
@@ -243,6 +245,7 @@ func (kv *RaftKV) readSnapshot(data []byte) {
 func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate int, chubbygomap uint32) *RaftKV {
 	gob.Register(KvOp{})
 	gob.Register(FileOp{})
+	gob.Register(CASOp{})
 
 	kv := new(RaftKV)
 	kv.me = me
@@ -253,6 +256,7 @@ func StartKVServerInit(me uint64, persister *Persister.Persister, maxraftstate i
 	kv.KvDictionary = NewChubbyGoMap(chubbygomap)
 	kv.ClientInstanceSeq = make(map[uint64]chan uint64)
 	kv.ClientInstanceCheckSum = make(map[uint64]chan uint64)
+	kv.CASNotice = make(map[uint64]chan bool)
 	kv.LogIndexNotice = make(map[int]chan struct{})
 	kv.persist = persister
 

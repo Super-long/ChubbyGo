@@ -350,6 +350,13 @@ func (cfg *ClientConfig) FastGet(key string) string {
 	return cfg.clk.FastGet(key)
 }
 
+/*
+ * @brief: 提供一个更为灵活的CAS操作，具体的定义见compareSwap.go文件首部
+ */
+func (cfg *ClientConfig) CompareAndSwap(Key string, Old int, New int, Flag int) bool {
+	return cfg.clk.CompareAndSwap(Key, Old, New, Flag)
+}
+
 // --------------------------
 // 使用Listener模式避免/Connect和/Config的环状引用
 
